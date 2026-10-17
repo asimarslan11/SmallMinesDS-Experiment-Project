@@ -15,7 +15,6 @@ outputs/
 *.tiff
 
 # Editor / OS
-.vscode/*
-!.vscode/settings.json
+.vscode/
 .DS_Store
 Thumbs.db
