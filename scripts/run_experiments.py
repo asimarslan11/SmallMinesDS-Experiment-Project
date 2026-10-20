@@ -1,6 +1,10 @@
 """Run the full grid (8 budgets x 4 conditions x 5 seeds = 160 runs) and append results to CSV.
 
-Usage: .venv\\Scripts\\python scripts\\run_experiments.py [--seeds 0 1] [--budgets 1 10] [--out results/runs.csv]
+Usage
+    main experiment (the plan):  python scripts\\run_experiments.py
+    supplementary A (GroupNorm): python scripts\\run_experiments.py --norm groupnorm --out results/groupnorm/runs.csv
+    supplementary B (320 steps): python scripts\\run_experiments.py --norm groupnorm --steps 320 --out results/steps320/runs.csv
+    options: --seeds 0 1 ...  --budgets 1 10 ...
 
 Resumable: runs whose name already appears in the CSV are skipped. The four conditions of each
 (seed, N) run back to back so paired comparisons are adjacent in the output.
@@ -70,7 +74,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, nargs="+", default=SEEDS)
     ap.add_argument("--budgets", type=int, nargs="+", default=BUDGETS)
-    ap.add_argument("--out", type=Path, default=ROOT / "results" / "runs.csv")
+    ap.add_argument("--steps", type=int, default=None, help="fixed optimiser steps instead of 10 epochs")
+    ap.add_argument("--norm", default="batchnorm", choices=["batchnorm", "groupnorm"])
+    ap.add_argument("--out", type=Path, default=ROOT / "results" / "main" / "runs.csv")
     args = ap.parse_args()
 
     if not torch.cuda.is_available():
@@ -94,9 +100,11 @@ def main() -> int:
     subsets_path.write_text(json.dumps(subsets, indent=1))
 
     done = done_runs(args.out)
-    todo = [RunConfig(s, n, enc, aug) for s in args.seeds for n in args.budgets for enc, aug in CONDITIONS]
+    todo = [RunConfig(s, n, enc, aug, steps=args.steps, norm=args.norm)
+            for s in args.seeds for n in args.budgets for enc, aug in CONDITIONS]
     todo = [c for c in todo if c.name not in done]
-    print(f"{len(done)} runs already done, {len(todo)} to go")
+    print(f"{len(done)} runs already done, {len(todo)} to go "
+          f"(protocol: {todo[0].protocol if todo else '-'}, norm: {args.norm})")
 
     t0 = time.perf_counter()
     for i, cfg in enumerate(todo, 1):

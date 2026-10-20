@@ -102,11 +102,11 @@ Built with [TerraTorch](https://github.com/IBM/terratorch) 1.2.13, identical in 
 
 ## Results
 
-All 160 runs: `results/runs.csv` (one row per run, including confusion counts and the per-epoch
-training loss), `results/summary.md` (all four metrics), `results/aug_gain.csv`,
-`results/environment.json` (software/hardware). Total compute: 13 min on an RTX 3080 Laptop.
+All 160 runs: `results/main/runs.csv` (one row per run, including confusion counts and the
+per-epoch training loss), `results/main/summary.md` (all four metrics), `results/main/aug_gain.csv`,
+`results/main/environment.json` (software/hardware). Total compute: 13 min on an RTX 3080 Laptop.
 
-![Test performance vs N](results/figures/curves.png)
+![Test performance vs N](results/main/figures/curves.png)
 
 ### Mine-class IoU on the test set (mean ± std over 5 seeds)
 
@@ -123,7 +123,7 @@ training loss), `results/summary.md` (all four metrics), `results/aug_gain.csv`,
 
 ### Paired augmentation gain in IoU (aug − no aug, same seed and subset; seeds improved)
 
-![Paired augmentation gain](results/figures/aug_gain.png)
+![Paired augmentation gain](results/main/figures/aug_gain.png)
 
 | N | Pretrained frozen | Random trainable |
 |---|---|---|

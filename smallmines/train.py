@@ -3,6 +3,10 @@
 Fixed protocol: 10 epochs, evaluate the epoch-10 weights; AdamW lr 1e-4 constant, weight decay
 0.01; batch size min(8, N); unweighted 2-class pixel cross-entropy; reshuffle every epoch, keep
 the final partial batch; no early stopping, validation or checkpoint selection.
+
+Supplementary variants (not part of the plan) are expressed through RunConfig: `steps` replaces
+the 10-epoch budget with a fixed number of optimiser steps, `norm` selects the decoder's
+normalisation layer.
 """
 from __future__ import annotations
 
@@ -39,10 +43,21 @@ class RunConfig:
     n_train: int
     encoder: str  # "pretrained" (frozen) | "random" (trainable)
     augment: bool
+    steps: int | None = None  # None: plan protocol (10 epochs); else exactly this many steps
+    norm: str = "batchnorm"   # decoder-side normalisation layer
 
     @property
     def name(self) -> str:
-        return f"s{self.seed}_n{self.n_train}_{self.encoder}_{'aug' if self.augment else 'noaug'}"
+        s = f"s{self.seed}_n{self.n_train}_{self.encoder}_{'aug' if self.augment else 'noaug'}"
+        if self.steps is not None:
+            s += f"_steps{self.steps}"
+        if self.norm != "batchnorm":
+            s += f"_{self.norm}"
+        return s
+
+    @property
+    def protocol(self) -> str:
+        return f"{EPOCHS} epochs" if self.steps is None else f"{self.steps} steps"
 
 
 def subset_rows(train: Split, cfg: RunConfig) -> np.ndarray:
@@ -91,8 +106,9 @@ def run_one(cfg: RunConfig, train: Split, test: Split, device: torch.device) -> 
     n = len(sub)
     batch = min(MAX_BATCH, n)
     steps_per_epoch = math.ceil(n / batch)  # final partial batch is kept
+    total_steps = EPOCHS * steps_per_epoch if cfg.steps is None else cfg.steps
 
-    model = build_model(pretrained=pretrained, seed=cfg.seed).to(device)
+    model = build_model(pretrained=pretrained, seed=cfg.seed, norm=cfg.norm).to(device)
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=LR, weight_decay=WEIGHT_DECAY)
 
@@ -102,11 +118,14 @@ def run_one(cfg: RunConfig, train: Split, test: Split, device: torch.device) -> 
     gen_aug = torch.Generator().manual_seed(20_000 + cfg.seed)
 
     epoch_loss = []
-    for _ in range(EPOCHS):
+    step = 0
+    while step < total_steps:
         set_train_mode(model, pretrained)
         perm = torch.randperm(n, generator=gen_order)
         losses = []
         for s in range(steps_per_epoch):
+            if step == total_steps:
+                break  # fixed-step budget ends mid-epoch
             idx = perm[s * batch:(s + 1) * batch]
             x, y = sub.x[idx], sub.mask[idx]
             if cfg.augment:
@@ -117,12 +136,14 @@ def run_one(cfg: RunConfig, train: Split, test: Split, device: torch.device) -> 
             loss.backward()
             opt.step()
             losses.append(loss.item())
+            step += 1
         epoch_loss.append(float(np.mean(losses)))
 
     counts = evaluate(model, test)
-    rec = {**asdict(cfg), "run": cfg.name, **summarise(counts.tolist())}
+    rec = {**asdict(cfg), "run": cfg.name, "protocol": cfg.protocol, **summarise(counts.tolist())}
     rec.update({
-        "steps": EPOCHS * steps_per_epoch,
+        "steps_done": step,
+        "epochs_done": len(epoch_loss),
         "batch_size": batch,
         "train_loss_first": epoch_loss[0],
         "train_loss_last": epoch_loss[-1],

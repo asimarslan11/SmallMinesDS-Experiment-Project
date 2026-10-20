@@ -1,6 +1,6 @@
-"""Summarise results/runs.csv: curves vs N, paired augmentation gains, and tables.
+"""Summarise a runs.csv: curves vs N, paired augmentation gains, and tables.
 
-Usage: .venv\\Scripts\\python scripts\\analyze.py [--runs results/runs.csv]
+Usage: .venv\\Scripts\\python scripts\\analyze.py [--runs results/main/runs.csv]
 
 Outputs (next to the runs file)
     summary.csv        mean/std over seeds of every metric per (N, encoder, augmentation)
@@ -41,6 +41,13 @@ def load_runs(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
     df["augment"] = df["augment"].astype(str).str.lower().eq("true")
     return df
+
+
+def variant_label(df: pd.DataFrame) -> str:
+    """Short description of the protocol/decoder used in a runs file, for figure titles."""
+    protocol = df["protocol"].iloc[0] if "protocol" in df else "10 epochs"
+    norm = df["norm"].iloc[0] if "norm" in df else "batchnorm"
+    return f"{protocol}, {'GroupNorm' if norm == 'groupnorm' else 'BatchNorm'} decoder"
 
 
 def summarise(df: pd.DataFrame) -> pd.DataFrame:
@@ -87,7 +94,7 @@ def _style_axis(ax, title: str) -> None:
         ax.spines[s].set_color(GRID)
 
 
-def plot_curves(summary: pd.DataFrame, out: Path) -> None:
+def plot_curves(summary: pd.DataFrame, out: Path, label: str) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(10, 7.2), facecolor=SURFACE, sharex=True)
     for ax, m in zip(axes.flat, METRICS):
         for enc, aug in CONDITIONS:
@@ -104,14 +111,14 @@ def plot_curves(summary: pd.DataFrame, out: Path) -> None:
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False, fontsize=9,
                labelcolor=TEXT, bbox_to_anchor=(0.5, -0.01))
-    fig.suptitle("Test performance vs training budget (mean ± std over 5 seeds, epoch 10)",
+    fig.suptitle(f"Test performance vs training budget — {label} (mean ± std over 5 seeds)",
                  color=TEXT, fontsize=12, x=0.02, ha="left")
     fig.tight_layout(rect=(0, 0.07, 1, 0.97))
     fig.savefig(out, dpi=160, facecolor=SURFACE)
     plt.close(fig)
 
 
-def plot_gain(gain: pd.DataFrame, out: Path) -> None:
+def plot_gain(gain: pd.DataFrame, out: Path, label: str) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(10, 3.9), facecolor=SURFACE, sharex=True)
     for ax, m in zip(axes, ["iou", "f1"]):
         ax.axhline(0, color=TEXT2, lw=0.8)
@@ -126,7 +133,7 @@ def plot_gain(gain: pd.DataFrame, out: Path) -> None:
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False, fontsize=9, labelcolor=TEXT,
                bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle("Augmented minus unaugmented run, same seed and subset (mean ± std over seeds)",
+    fig.suptitle(f"Augmented minus unaugmented run, same seed and subset — {label}",
                  color=TEXT, fontsize=12, x=0.02, ha="left")
     fig.tight_layout(rect=(0, 0.1, 1, 0.95))
     fig.savefig(out, dpi=160, facecolor=SURFACE)
@@ -169,7 +176,7 @@ def markdown_tables(summary: pd.DataFrame, gain: pd.DataFrame) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", type=Path, default=ROOT / "results" / "runs.csv")
+    ap.add_argument("--runs", type=Path, default=ROOT / "results" / "main" / "runs.csv")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # tables contain ± and −; Windows consoles default to cp1252
     out_dir = args.runs.parent
@@ -184,8 +191,9 @@ def main() -> int:
     summary.to_csv(out_dir / "summary.csv", index=False)
     gain.to_csv(out_dir / "aug_gain.csv", index=False)
     (out_dir / "summary.md").write_text(markdown_tables(summary, gain), encoding="utf-8")
-    plot_curves(summary, out_dir / "figures" / "curves.png")
-    plot_gain(gain, out_dir / "figures" / "aug_gain.png")
+    label = variant_label(df)
+    plot_curves(summary, out_dir / "figures" / "curves.png", label)
+    plot_gain(gain, out_dir / "figures" / "aug_gain.png", label)
     print(markdown_tables(summary, gain))
     print("OK: wrote summary.csv, aug_gain.csv, summary.md, figures/ ->", out_dir)
     return 0

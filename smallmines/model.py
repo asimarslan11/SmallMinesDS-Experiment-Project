@@ -7,6 +7,9 @@ Architecture (identical in every condition)
     neck    : layers 2, 5, 8, 11 -> reshaped to 8x8 maps -> learned pyramid 32/16/8/4 px
     decoder : 4-block UNet decoder (smp) with channels 128/64/32/16 -> 64x64
     head    : 1x1 conv to 2 classes, bilinear x2 to 128x128
+
+Normalisation layers on the decoder side are BatchNorm2d (TerraTorch/smp default) in the main
+experiment; norm="groupnorm" swaps every one of them for GroupNorm (supplementary experiment).
 """
 from __future__ import annotations
 
@@ -20,9 +23,22 @@ from .data import IMG_SIZE, S2_BANDS
 ENCODER_LAYERS = [2, 5, 8, 11]
 DECODER_CHANNELS = [128, 64, 32, 16]
 NUM_CLASSES = 2
+NORMS = ("batchnorm", "groupnorm")
+GROUPNORM_GROUPS = 8  # every decoder-side channel count (16..192) is divisible by 8
 
 
-def build_model(pretrained: bool, seed: int) -> nn.Module:
+def _swap_batchnorm_for_groupnorm(module: nn.Module) -> int:
+    n = 0
+    for name, child in module.named_children():
+        if isinstance(child, nn.BatchNorm2d):
+            setattr(module, name, nn.GroupNorm(GROUPNORM_GROUPS, child.num_features))
+            n += 1
+        else:
+            n += _swap_batchnorm_for_groupnorm(child)
+    return n
+
+
+def build_model(pretrained: bool, seed: int, norm: str = "batchnorm") -> nn.Module:
     """Build the segmentation model for one condition.
 
     pretrained=True : TerraMind weights loaded, encoder frozen (requires_grad False, eval mode).
@@ -31,6 +47,9 @@ def build_model(pretrained: bool, seed: int) -> nn.Module:
     their initial weights are identical across all four conditions of the same seed.
     """
     from terratorch.models import EncoderDecoderFactory
+
+    if norm not in NORMS:
+        raise ValueError(f"norm must be one of {NORMS}, got {norm!r}")
 
     torch.manual_seed(seed)  # random-init encoder weights (overwritten when pretrained)
     with warnings.catch_warnings():
@@ -55,8 +74,13 @@ def build_model(pretrained: bool, seed: int) -> nn.Module:
             rescale=True,
         )
 
+    decoder_side = (model.neck, model.decoder, model.head)
+    if norm == "groupnorm":
+        swapped = sum(_swap_batchnorm_for_groupnorm(part) for part in decoder_side)
+        assert swapped > 0, "no BatchNorm2d layers found to replace"
+
     torch.manual_seed(30_000 + seed)
-    for part in (model.neck, model.decoder, model.head):
+    for part in decoder_side:
         for m in part.modules():
             if hasattr(m, "reset_parameters"):
                 m.reset_parameters()
