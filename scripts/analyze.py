@@ -111,9 +111,9 @@ def plot_curves(summary: pd.DataFrame, out: Path, label: str) -> None:
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False, fontsize=9,
                labelcolor=TEXT, bbox_to_anchor=(0.5, -0.01))
-    fig.suptitle(f"Test performance vs training budget — {label} (mean ± std over 5 seeds)",
+    fig.suptitle(f"Test performance vs training budget (mean ± std over 5 seeds)\n{label}",
                  color=TEXT, fontsize=12, x=0.02, ha="left")
-    fig.tight_layout(rect=(0, 0.07, 1, 0.97))
+    fig.tight_layout(rect=(0, 0.07, 1, 0.95))
     fig.savefig(out, dpi=160, facecolor=SURFACE)
     plt.close(fig)
 
@@ -133,9 +133,9 @@ def plot_gain(gain: pd.DataFrame, out: Path, label: str) -> None:
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=2, frameon=False, fontsize=9, labelcolor=TEXT,
                bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle(f"Augmented minus unaugmented run, same seed and subset — {label}",
+    fig.suptitle(f"Augmented minus unaugmented run, same seed and subset (mean ± std over 5 seeds)\n{label}",
                  color=TEXT, fontsize=12, x=0.02, ha="left")
-    fig.tight_layout(rect=(0, 0.1, 1, 0.95))
+    fig.tight_layout(rect=(0, 0.1, 1, 0.92))
     fig.savefig(out, dpi=160, facecolor=SURFACE)
     plt.close(fig)
 

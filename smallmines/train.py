@@ -1,8 +1,10 @@
 """Train and evaluate one run (seed, N, encoder condition, augmentation) per the experiment plan.
 
-Fixed protocol: 10 epochs, evaluate the epoch-10 weights; AdamW lr 1e-4 constant, weight decay
-0.01; batch size min(8, N); unweighted 2-class pixel cross-entropy; reshuffle every epoch, keep
-the final partial batch; no early stopping, validation or checkpoint selection.
+Fixed protocol (v2, 2026-10-20): 50 epochs, evaluate the final weights; AdamW with a per-step
+cosine learning-rate schedule from 5e-3 (first update) to 1e-5 (last update), weight decay 0.01;
+batch size min(8, N); unweighted 2-class pixel cross-entropy; reshuffle every epoch, keep the
+final partial batch; no early stopping, validation or checkpoint selection.
+(v1, archived under results/v1_10ep/: 10 epochs, constant lr 1e-4.)
 
 Supplementary variants (not part of the plan) are expressed through RunConfig: `steps` replaces
 the 10-epoch budget with a fixed number of optimiser steps, `norm` selects the decoder's
@@ -22,9 +24,17 @@ from .data import Split, as_model_input, augment_batch, training_order
 from .metrics import confusion_counts, summarise
 from .model import build_model, count_parameters, set_train_mode
 
-EPOCHS = 10
-LR = 1e-4
+EPOCHS = 50
+LR_START = 5e-3
+LR_END = 1e-5
 WEIGHT_DECAY = 0.01
+
+
+def _lr(v: float) -> str:
+    return f"{v:.0e}".replace("e-0", "e-")  # 5e-3, 1e-5
+
+
+SCHEDULE = f"cosine lr {_lr(LR_START)}->{_lr(LR_END)}"
 MAX_BATCH = 8
 EVAL_BATCH = 64
 BUDGETS = [1, 3, 5, 10, 20, 50, 100, 250]
@@ -57,7 +67,8 @@ class RunConfig:
 
     @property
     def protocol(self) -> str:
-        return f"{EPOCHS} epochs" if self.steps is None else f"{self.steps} steps"
+        budget = f"{EPOCHS} epochs" if self.steps is None else f"{self.steps} steps"
+        return f"{budget}, {SCHEDULE}"
 
 
 def subset_rows(train: Split, cfg: RunConfig) -> np.ndarray:
@@ -110,7 +121,10 @@ def run_one(cfg: RunConfig, train: Split, test: Split, device: torch.device) -> 
 
     model = build_model(pretrained=pretrained, seed=cfg.seed, norm=cfg.norm).to(device)
     params = [p for p in model.parameters() if p.requires_grad]
-    opt = torch.optim.AdamW(params, lr=LR, weight_decay=WEIGHT_DECAY)
+    opt = torch.optim.AdamW(params, lr=LR_START, weight_decay=WEIGHT_DECAY)
+    # Cosine decay per optimiser step; T_max = steps - 1 so the last update uses exactly LR_END
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(total_steps - 1, 1), eta_min=LR_END)
+    lr_first = opt.param_groups[0]["lr"]
 
     # Batch order and augmentation draws come from separate generators, so turning augmentation
     # on does not change which images share a batch; both depend only on the seed.
@@ -135,6 +149,8 @@ def run_one(cfg: RunConfig, train: Split, test: Split, device: torch.device) -> 
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
+            lr_last = opt.param_groups[0]["lr"]
+            sched.step()
             losses.append(loss.item())
             step += 1
         epoch_loss.append(float(np.mean(losses)))
@@ -145,6 +161,9 @@ def run_one(cfg: RunConfig, train: Split, test: Split, device: torch.device) -> 
         "steps_done": step,
         "epochs_done": len(epoch_loss),
         "batch_size": batch,
+        "lr_first": lr_first,
+        "lr_last": lr_last,
+        "diverged": not all(math.isfinite(v) for v in epoch_loss),
         "train_loss_first": epoch_loss[0],
         "train_loss_last": epoch_loss[-1],
         "train_loss_curve": ";".join(f"{v:.5f}" for v in epoch_loss),

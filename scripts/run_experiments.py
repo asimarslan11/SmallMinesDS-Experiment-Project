@@ -1,10 +1,9 @@
 """Run the full grid (8 budgets x 4 conditions x 5 seeds = 160 runs) and append results to CSV.
 
 Usage
-    main experiment (the plan):  python scripts\\run_experiments.py
-    supplementary A (GroupNorm): python scripts\\run_experiments.py --norm groupnorm --out results/groupnorm/runs.csv
-    supplementary B (320 steps): python scripts\\run_experiments.py --norm groupnorm --steps 320 --out results/steps320/runs.csv
-    options: --seeds 0 1 ...  --budgets 1 10 ...
+    main experiment (protocol v2: 50 epochs, cosine lr 5e-3 -> 1e-5):  python scripts\\run_experiments.py
+    variants: --norm groupnorm (GroupNorm decoder), --steps K (fixed step budget), --out <runs.csv>
+    options:  --seeds 0 1 ...  --budgets 1 10 ...
 
 Resumable: runs whose name already appears in the CSV are skipped. The four conditions of each
 (seed, N) run back to back so paired comparisons are adjacent in the output.

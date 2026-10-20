@@ -1,9 +1,9 @@
 """Side-by-side IoU curves and a table for the main experiment and the supplementary variants.
 
-Usage: .venv\\Scripts\\python scripts\\compare_variants.py
+Usage: .venv\\Scripts\\python scripts\\compare_variants.py [--root results/v1_10ep]
 
-Reads results/<variant>/summary.csv for every variant that exists and writes
-results/figures/variants.png and results/variants.md.
+Reads <root>/<variant>/summary.csv for every variant that exists and writes
+<root>/figures/variants.png and <root>/variants.md.
 """
 from __future__ import annotations
 
@@ -24,16 +24,16 @@ from scripts.analyze import AUG_LABEL, COLOR, ENCODER_LABEL, STYLE, SURFACE, TEX
 from smallmines.train import BUDGETS, CONDITIONS  # noqa: E402
 
 VARIANTS = [  # (directory, title)
-    ("main", "Main: plan protocol (10 epochs), BatchNorm decoder"),
-    ("groupnorm", "A: 10 epochs, GroupNorm decoder"),
+    ("main", "Main protocol, BatchNorm decoder"),
+    ("groupnorm", "A: same budget, GroupNorm decoder"),
     ("steps320", "B: 320 steps for every N, GroupNorm decoder"),
 ]
 
 
-def load() -> list[tuple[str, str, pd.DataFrame]]:
+def load(root: Path) -> list[tuple[str, str, pd.DataFrame]]:
     out = []
     for d, title in VARIANTS:
-        p = ROOT / "results" / d / "summary.csv"
+        p = root / d / "summary.csv"
         if p.exists():
             s = pd.read_csv(p)
             s["augment"] = s["augment"].astype(str).str.lower().eq("true")
@@ -83,17 +83,22 @@ def table(variants) -> str:
 
 
 def main() -> int:
+    import argparse
+
     sys.stdout.reconfigure(encoding="utf-8")
-    variants = load()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", type=Path, default=ROOT / "results")
+    args = ap.parse_args()
+    variants = load(args.root)
     if not variants:
-        print("no results/<variant>/summary.csv found; run scripts/analyze.py first")
+        print(f"no {args.root}/<variant>/summary.csv found; run scripts/analyze.py first")
         return 1
-    (ROOT / "results" / "figures").mkdir(exist_ok=True)
-    plot(variants, ROOT / "results" / "figures" / "variants.png")
+    (args.root / "figures").mkdir(exist_ok=True)
+    plot(variants, args.root / "figures" / "variants.png")
     md = table(variants)
-    (ROOT / "results" / "variants.md").write_text(md, encoding="utf-8")
+    (args.root / "variants.md").write_text(md, encoding="utf-8")
     print(md)
-    print("OK: results/figures/variants.png, results/variants.md")
+    print(f"OK: {args.root}/figures/variants.png, {args.root}/variants.md")
     return 0
 
 
