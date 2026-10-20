@@ -28,12 +28,19 @@ python scripts\build_cache.py      # normalised per-split arrays in data/cache/
 ## Run
 
 ```powershell
-python scripts\run_experiments.py  # 160 runs, ~20 min on an RTX 3080 Laptop; resumable
-python scripts\analyze.py          # tables + figures in results/
+python scripts\run_experiments.py  # main experiment: 160 runs, ~13 min on an RTX 3080 Laptop; resumable
+python scripts\analyze.py          # tables + figures in results/main/
+
+# supplementary variants (see below), ~14 min and ~62 min
+python scripts\run_experiments.py --norm groupnorm --out results/groupnorm/runs.csv
+python scripts\run_experiments.py --norm groupnorm --steps 320 --out results/steps320/runs.csv
+python scripts\analyze.py --runs results/groupnorm/runs.csv
+python scripts\analyze.py --runs results/steps320/runs.csv
+python scripts\compare_variants.py # results/figures/variants.png + results/variants.md
 ```
 
-`run_experiments.py` appends one row per run to `results/runs.csv` and skips runs already
-present, so it can be interrupted and restarted. `--seeds` and `--budgets` restrict the grid.
+`run_experiments.py` appends one row per run to the runs file and skips runs already present,
+so it can be interrupted and restarted. `--seeds` and `--budgets` restrict the grid.
 TerraMind weights are downloaded from Hugging Face on first use.
 
 ## Experiment
@@ -140,7 +147,8 @@ per-epoch training loss), `results/main/summary.md` (all four metrics), `results
   "mine" everywhere (precision = test base rate 0.078), 2 seeds predict "background"
   everywhere (IoU 0, precision NA). Which of the two happens is set by the shared decoder
   initialisation, so all four conditions are identical to 3 decimals here. These budgets say
-  nothing about the encoders.
+  nothing about the encoders. (Supplementary experiment A below traces the constant output to
+  the decoder's BatchNorm running statistics; B shows that with enough steps every N learns.)
 - **The frozen pretrained encoder wins from N = 20 upward**, and the margin over the trainable
   random encoder grows with N: +0.018 IoU at N = 50, +0.016 at 100, +0.027 at 250 (no aug), with
   lower seed variance. The random encoder is trainable but, within this fixed budget, never
@@ -151,18 +159,89 @@ per-epoch training loss), `results/main/summary.md` (all four metrics), `results
   or negative beyond that.
 - **One outlier.** Random encoder, D4 aug, N = 50, seed 3 reaches IoU 0.13 while its unaugmented
   twin reaches 0.45 with an almost identical training-loss curve; the model predicts 55 % of
-  test pixels as mine. This is an evaluation-mode shift of the UNet decoder's BatchNorm
-  statistics (batch size 8), not a training divergence; it is kept as-is because the protocol
-  has no checkpoint selection. Without it the random-encoder gain at N = 50 is +0.001 ± 0.007.
+  test pixels as mine. The pattern persists with a GroupNorm decoder (A: 0.12 vs 0.28) and
+  disappears with more steps (B: 0.53 vs 0.54), so it is a slowly converging seed caught at
+  70 steps, not a normalisation artefact. It is kept as-is because the protocol has no
+  checkpoint selection. Without it the random-encoder gain at N = 50 is +0.001 ± 0.007.
 - Reading guide: all small-N training sets are mine-heavy by construction (see above), so
   precision is low and recall high at N ≤ 20 in every condition; the test set has 7.8 % mine
   pixels. Standard deviations are over seeds (population std, n = 5).
+
+## Supplementary experiments (beyond the plan)
+
+Two single-factor variants probe the two limitations the main results expose. Data, subsets,
+seeds, model, optimiser and metrics are unchanged; each variant is a full 160-run grid.
+
+- **A — GroupNorm decoder** (`results/groupnorm/`, 14 min): the decoder side's 9 BatchNorm2d
+  layers are replaced by GroupNorm (8 groups); protocol unchanged (10 epochs). Isolates the
+  normalisation layer. Parameter count is identical.
+- **B — equal optimisation budget** (`results/steps320/`, 62 min): every N trains for exactly
+  320 optimiser steps (what the plan gives N = 250), with the GroupNorm decoder. Isolates the
+  step budget. At N = 250 it is the same protocol as A, and the two produce identical confusion
+  counts (a determinism check).
+
+![IoU across variants](results/figures/variants.png)
+
+All three IoU tables are in `results/variants.md`; the full per-variant analyses are in
+`results/groupnorm/` and `results/steps320/`.
+
+### B: mine-class IoU with 320 steps for every N (mean ± std over 5 seeds)
+
+| N | Pretrained frozen, no aug | Pretrained frozen, D4 aug | Random trainable, no aug | Random trainable, D4 aug |
+|---|---|---|---|---|
+| 1 | 0.144 ± 0.016 | 0.185 ± 0.039 | 0.150 ± 0.041 | **0.213 ± 0.059** |
+| 3 | 0.218 ± 0.028 | 0.329 ± 0.046 | 0.238 ± 0.038 | **0.355 ± 0.043** |
+| 5 | 0.247 ± 0.039 | 0.376 ± 0.074 | 0.263 ± 0.044 | **0.404 ± 0.066** |
+| 10 | 0.303 ± 0.045 | 0.408 ± 0.044 | 0.333 ± 0.058 | **0.430 ± 0.030** |
+| 20 | 0.540 ± 0.031 | **0.597 ± 0.018** | 0.539 ± 0.022 | 0.584 ± 0.026 |
+| 50 | 0.571 ± 0.014 | **0.604 ± 0.013** | 0.553 ± 0.034 | 0.567 ± 0.029 |
+| 100 | 0.577 ± 0.015 | **0.586 ± 0.007** | 0.553 ± 0.026 | 0.556 ± 0.017 |
+| 250 | 0.586 ± 0.028 | **0.587 ± 0.020** | 0.537 ± 0.024 | 0.528 ± 0.027 |
+
+### B: paired augmentation gain in IoU (aug − no aug; seeds improved)
+
+| N | Pretrained frozen | Random trainable |
+|---|---|---|
+| 1 | +0.041 ± 0.027 (4/5) | +0.062 ± 0.049 (5/5) |
+| 3 | +0.111 ± 0.041 (5/5) | +0.117 ± 0.037 (5/5) |
+| 5 | +0.129 ± 0.050 (5/5) | +0.141 ± 0.036 (5/5) |
+| 10 | +0.105 ± 0.040 (5/5) | +0.097 ± 0.060 (5/5) |
+| 20 | +0.058 ± 0.024 (5/5) | +0.045 ± 0.026 (5/5) |
+| 50 | +0.033 ± 0.004 (5/5) | +0.015 ± 0.017 (4/5) |
+| 100 | +0.009 ± 0.020 (4/5) | +0.004 ± 0.013 (2/5) |
+| 250 | +0.001 ± 0.029 (1/5) | −0.009 ± 0.021 (2/5) |
+
+### What the variants show
+
+- **The constant outputs at N ≤ 5 come from BatchNorm.** With GroupNorm (A) no run is constant
+  any more (IoU 0.09–0.17 at N ≤ 5, no NA metrics): after only 10 updates BatchNorm's running
+  statistics are still near their initial values, so the network behaves differently in eval
+  mode than in training. Under the 10-epoch budget, however, GroupNorm converges more slowly at
+  N = 20–100 (e.g. 0.450 vs 0.514 at N = 50) and matches BatchNorm at N = 250.
+- **Given an equal 320-step budget (B), every N learns**, and the curves become smooth:
+  IoU 0.14–0.21 from a single image, 0.54–0.60 from 20 images.
+- **Augmentation is a small-data tool.** In B the paired gain is +0.11…+0.14 IoU at N = 3–10
+  (5/5 seeds for both encoders), +0.05 at N = 20, +0.03 for the frozen encoder at N = 50
+  (5/5), and ≈ 0 from N = 100 on. In the main experiment the same gains were visible only at
+  N = 10–20, because smaller budgets never reached the point where augmentation matters.
+- **Encoders under equal steps.** From N = 20 the frozen pretrained encoder is ahead, and the
+  margin grows with N (+0.00 at 20, +0.02 at 50, +0.02 at 100, +0.05 at 250, no aug). At N ≤ 10
+  the trainable random encoder is slightly ahead (by 0.01–0.03, within one standard deviation).
+  The frozen encoder saturates early: with augmentation, N = 20 (0.597) already matches
+  N = 250 (0.587) under this budget.
+- Augmentation never significantly hurts in B; the negative random-encoder gains in the main
+  experiment and in A at N ≥ 50 are driven by single slowly converging seeds.
 
 ## Layout
 
 ```
 smallmines/        data.py (loading, normalisation, subsets, D4), model.py, train.py, metrics.py
-scripts/           check_gpu.py, download_data.py, build_cache.py, run_experiments.py, analyze.py
-results/           runs.csv, summary.csv, aug_gain.csv, summary.md, subsets.json, figures/
+scripts/           check_gpu.py, download_data.py, build_cache.py, run_experiments.py,
+                   analyze.py, compare_variants.py
+results/main/      the plan's experiment: runs.csv, summary.csv, aug_gain.csv, summary.md,
+                   subsets.json, environment.json, figures/
+results/groupnorm/ supplementary A (same layout)
+results/steps320/  supplementary B (same layout)
+results/           variants.md, figures/variants.png
 data/              (git-ignored) dataset, split CSVs, cache
 ```
