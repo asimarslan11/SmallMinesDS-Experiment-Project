@@ -153,7 +153,7 @@ training loss), `results/summary.md` (all four metrics), `results/aug_gain.csv`,
   twin reaches 0.45 with an almost identical training-loss curve; the model predicts 55 % of
   test pixels as mine. This is an evaluation-mode shift of the UNet decoder's BatchNorm
   statistics (batch size 8), not a training divergence; it is kept as-is because the protocol
-  has no checkpoint selection. Without it the random-encoder gain at N = 50 is +0.004 ± 0.006.
+  has no checkpoint selection. Without it the random-encoder gain at N = 50 is +0.001 ± 0.007.
 - Reading guide: all small-N training sets are mine-heavy by construction (see above), so
   precision is low and recall high at N ≤ 20 in every condition; the test set has 7.8 % mine
   pixels. Standard deviations are over seeds (population std, n = 5).
