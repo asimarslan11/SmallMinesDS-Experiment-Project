@@ -68,8 +68,9 @@ trained from scratch?
 - D4 augmentation: one of the 8 square symmetries (rotations by 0/90/180/270°, each with or
   without a horizontal flip), uniform, re-drawn per image presentation, applied identically to
   S1, S2 and the mask. Test images are never augmented.
-- Metrics: mine-class IoU, F1, precision and recall from confusion counts pooled over the fixed
-  644-image test set; zero-denominator metrics are reported as NA.
+- Metric: mine-class IoU from confusion counts pooled over the fixed 644-image test set is the
+  primary metric; F1, precision and recall from the same counts are reported alongside in
+  `results/main/summary.md`. Zero-denominator metrics are reported as NA.
 
 ### Data
 
