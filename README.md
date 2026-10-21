@@ -31,7 +31,7 @@ python scripts\build_cache.py      # normalised per-split arrays in data/cache/
 python scripts\run_experiments.py  # main experiment: 160 runs, ~70 min on an RTX 3080 Laptop; resumable
 python scripts\analyze.py          # tables + figures in results/main/
 
-# optional variants (see "Protocol v1" below for how they were used)
+# optional variants (used for the archived earlier run, see the end of this README)
 python scripts\run_experiments.py --norm groupnorm --out results/groupnorm/runs.csv   # GroupNorm decoder
 python scripts\run_experiments.py --steps 1600 --out results/steps1600/runs.csv       # fixed step budget
 python scripts\analyze.py --runs results/<variant>/runs.csv
@@ -57,14 +57,14 @@ trained from scratch?
 
 - Budgets N ∈ {1, 3, 5, 10, 20, 50, 100, 250} training images, 5 seeds, 4 conditions → 160 runs.
 - Subsets are nested within a seed and identical across the four conditions.
-- **Protocol v2 (current):** 50 epochs, evaluate the final weights. AdamW with a per-step cosine
+- **Protocol:** 50 epochs, evaluate the final weights. AdamW with a per-step cosine
   learning-rate schedule from 5e-3 (first update) to 1e-5 (last update), weight decay 0.01,
   batch size min(8, N), unweighted 2-class pixel cross-entropy, reshuffle every epoch, final
   partial batch kept, no early stopping / validation / checkpoint selection. Because the epoch
   count is fixed, the number of optimiser steps grows with N: 50 for N ≤ 5, 100 at N = 10, 150 at
   N = 20, 350 at N = 50, 650 at N = 100, 1600 at N = 250.
-- The original plan specified 10 epochs at a constant lr of 1e-4 (protocol v1). Those results
-  are kept under `results/v1_10ep/` and summarised at the end of this README.
+- An earlier run with the plan document's original schedule (10 epochs at a constant lr of
+  1e-4) is kept under `results/v1_10ep/` and summarised at the end of this README.
 - D4 augmentation: one of the 8 square symmetries (rotations by 0/90/180/270°, each with or
   without a horizontal flip), uniform, re-drawn per image presentation, applied identically to
   S1, S2 and the mask. Test images are never augmented.
@@ -112,7 +112,7 @@ Built with [TerraTorch](https://github.com/IBM/terratorch) 1.2.13, identical in 
   written without the non-deterministic `nll_loss2d` kernel. Repeated runs are bit-identical
   on the same machine/software stack.
 
-## Results (protocol v2: 50 epochs, cosine lr 5e-3 → 1e-5)
+## Results
 
 All 160 runs: `results/main/runs.csv` (one row per run, including confusion counts, learning
 rates and the per-epoch training loss), `results/main/summary.md` (all four metrics),
@@ -169,11 +169,12 @@ Total compute: 68 min on an RTX 3080 Laptop. No run diverged at lr 5e-3 and no m
   precision and recall at N ≤ 10 reflect that composition; the test set has 7.8 % mine pixels.
   Standard deviations are over seeds (population std, n = 5).
 
-## Protocol v1 (archived): 10 epochs, constant lr 1e-4
+## Earlier run with the plan document's original schedule (archived)
 
-The plan's original protocol was run first; its results are kept under `results/v1_10ep/`
-(`main/`, plus two supplementary grids and `variants.md` / `figures/variants.png` comparing
-them). Mine-class IoU under v1 (mean ± std over 5 seeds):
+The plan document's original schedule (10 epochs at a constant lr of 1e-4) was run first; its
+results are kept under `results/v1_10ep/` (`main/`, plus two supplementary grids and
+`variants.md` / `figures/variants.png` comparing them). Mine-class IoU under that schedule
+(mean ± std over 5 seeds):
 
 | N | steps | Pretrained frozen, no aug | Pretrained frozen, D4 aug | Random trainable, no aug | Random trainable, D4 aug |
 |---|---|---|---|---|---|
@@ -184,18 +185,18 @@ them). Mine-class IoU under v1 (mean ± std over 5 seeds):
 | 100 | 130 | 0.536 ± 0.020 | 0.545 ± 0.018 | 0.520 ± 0.030 | 0.509 ± 0.049 |
 | 250 | 320 | 0.591 ± 0.018 | 0.594 ± 0.023 | 0.564 ± 0.024 | 0.563 ± 0.031 |
 
-What v1 showed, and why the protocol was changed:
+What that run showed, and why the schedule was changed:
 
 - With batch size N, 10 epochs are only 10 optimiser steps at lr 1e-4 for N ≤ 5. Every such run
   ended at a constant prediction (3 seeds all-mine, 2 seeds all-background) and the four
   conditions were identical; a GroupNorm variant (`results/v1_10ep/groupnorm/`) traced the
   constant outputs to BatchNorm's barely updated running statistics.
-- The ordering of strategies was already the same as under v2: frozen pretrained ahead from
-  N = 20 (+0.027 IoU at N = 250), augmentation helpful at N = 10–20.
+- The ordering of strategies was already the same as in the current results: frozen pretrained
+  ahead from N = 20 (+0.027 IoU at N = 250), augmentation helpful at N = 10–20.
 - A variant with 320 steps for every N (`results/v1_10ep/steps320/`) showed that, given equal
   optimisation, every budget learns and augmentation adds +0.11 to +0.14 IoU at N = 3–10.
-- Protocol v2 (50 epochs, cosine 5e-3 → 1e-5) gives every budget at least 50 steps and a
-  decaying learning rate; under it the small-N collapse disappears and the gaps between
+- The current protocol (50 epochs, cosine 5e-3 → 1e-5) gives every budget at least 50 steps
+  and a decaying learning rate; under it the small-N collapse disappears and the gaps between
   conditions become consistent across seeds.
 
 ## Layout
@@ -204,9 +205,10 @@ What v1 showed, and why the protocol was changed:
 smallmines/        data.py (loading, normalisation, subsets, D4), model.py, train.py, metrics.py
 scripts/           check_gpu.py, download_data.py, build_cache.py, run_experiments.py,
                    analyze.py, compare_variants.py
-results/main/      protocol v2: runs.csv, summary.csv, aug_gain.csv, summary.md,
+results/main/      current protocol: runs.csv, summary.csv, aug_gain.csv, summary.md,
                    subsets.json, environment.json, figures/
-results/v1_10ep/   protocol v1: main/, groupnorm/, steps320/, variants.md, figures/variants.png
+results/v1_10ep/   archived earlier run (10 epochs, constant lr): main/, groupnorm/, steps320/,
+                   variants.md, figures/variants.png
 report/            experiment report (PDF)
 data/              (git-ignored) dataset, split CSVs, cache
 ```
