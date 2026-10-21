@@ -25,7 +25,13 @@ import matplotlib.pyplot as plt  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from smallmines.train import BUDGETS, CONDITIONS, SEEDS  # noqa: E402
+from smallmines.train import BUDGETS, CONDITIONS  # noqa: E402
+
+TRAIN_SIZE = 1491  # all SmallMinesDS 2022 training patches
+
+
+def n_label(n: int) -> str:
+    return "all" if n == TRAIN_SIZE else str(n)
 
 METRICS = ["iou", "f1", "precision", "recall"]
 ENCODER_LABEL = {"pretrained": "TerraMind pretrained, frozen", "random": "Random init, trainable"}
@@ -83,7 +89,7 @@ def _style_axis(ax, title: str) -> None:
     ax.set_title(title, color=TEXT, fontsize=11, loc="left")
     ax.set_xscale("log")
     ax.set_xticks(BUDGETS)
-    ax.set_xticklabels([str(b) for b in BUDGETS], color=TEXT2)
+    ax.set_xticklabels([n_label(b) for b in BUDGETS], color=TEXT2)
     ax.tick_params(axis="y", colors=TEXT2)
     ax.minorticks_off()
     ax.grid(True, color=GRID, linewidth=0.6)
@@ -140,6 +146,30 @@ def plot_gain(gain: pd.DataFrame, out: Path, label: str) -> None:
     plt.close(fig)
 
 
+def plot_variance(df: pd.DataFrame, out: Path, label: str) -> None:
+    """Every seed's IoU as a translucent dot, with the mean line and a translucent ±std band."""
+    fig, axes = plt.subplots(2, 2, figsize=(10, 7.2), facecolor=SURFACE, sharex=True, sharey=True)
+    for ax, (enc, aug) in zip(axes.flat, CONDITIONS):
+        sub = df[(df["encoder"] == enc) & (df["augment"] == aug)]
+        g = sub.groupby("n_train")["iou"]
+        m, sd = g.mean(), g.std(ddof=0)
+        c = COLOR[enc]
+        ax.fill_between(m.index, m - sd, m + sd, color=c, alpha=0.18, lw=0)
+        ax.plot(m.index, m.values, "-", color=c, lw=1.6)
+        ax.scatter(sub["n_train"], sub["iou"], s=22, color=c, alpha=0.35, lw=0)
+        _style_axis(ax, f"{ENCODER_LABEL[enc]}, {AUG_LABEL[aug]}")
+        ax.set_ylim(0.2, 0.85)
+    for ax in axes[1]:
+        ax.set_xlabel("Training images N (log scale)", color=TEXT2)
+    for ax in axes[:, 0]:
+        ax.set_ylabel("Mine-class IoU (test)", color=TEXT2)
+    fig.suptitle(f"Seed-to-seed variance of IoU: each dot is one run, band = mean ± std\n{label}",
+                 color=TEXT, fontsize=12, x=0.02, ha="left")
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(out, dpi=160, facecolor=SURFACE)
+    plt.close(fig)
+
+
 def _fmt(mean: float, std: float) -> str:
     return "NA" if np.isnan(mean) else f"{mean:.3f} ± {std:.3f}"
 
@@ -156,7 +186,7 @@ def markdown_tables(summary: pd.DataFrame, gain: pd.DataFrame) -> str:
                 s = summary[(summary["n_train"] == n) & (summary["encoder"] == enc)
                             & (summary["augment"] == aug) & (summary["metric"] == m)]
                 cells.append(_fmt(s["mean"].iloc[0], s["std"].iloc[0]) if len(s) else "-")
-            lines.append(f"| {n} | " + " | ".join(cells) + " |")
+            lines.append(f"| {n_label(n)} | " + " | ".join(cells) + " |")
         lines.append("")
     lines += ["### Paired augmentation gain in IoU (aug − no aug, same seed and subset)", "",
               "| N | " + " | ".join(f"{ENCODER_LABEL[e]} (seeds improved)" for e in ("pretrained", "random")) + " |",
@@ -170,7 +200,7 @@ def markdown_tables(summary: pd.DataFrame, gain: pd.DataFrame) -> str:
                 cells.append(f"{_fmt(r['mean_gain'], r['std_gain'])} ({r['n_positive']}/{r['n_seeds']})")
             else:
                 cells.append("-")
-        lines.append(f"| {n} | " + " | ".join(cells) + " |")
+        lines.append(f"| {n_label(n)} | " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
 
 
@@ -183,8 +213,10 @@ def main() -> int:
     (out_dir / "figures").mkdir(parents=True, exist_ok=True)
 
     df = load_runs(args.runs)
-    expected = len(BUDGETS) * len(CONDITIONS) * len(SEEDS)
-    print(f"{len(df)} runs loaded ({expected} expected); NA metrics: {int(df[METRICS].isna().sum().sum())}")
+    global BUDGETS
+    BUDGETS = sorted(int(n) for n in df["n_train"].unique())  # every budget present in the runs file
+    seeds = df.groupby("n_train")["seed"].nunique().to_dict()
+    print(f"{len(df)} runs loaded; seeds per budget {seeds}; NA metrics: {int(df[METRICS].isna().sum().sum())}")
 
     summary = summarise(df)
     gain = paired_gain(df)
@@ -194,6 +226,7 @@ def main() -> int:
     label = variant_label(df)
     plot_curves(summary, out_dir / "figures" / "curves.png", label)
     plot_gain(gain, out_dir / "figures" / "aug_gain.png", label)
+    plot_variance(df, out_dir / "figures" / "variance.png", label)
     print(markdown_tables(summary, gain))
     print("OK: wrote summary.csv, aug_gain.csv, summary.md, figures/ ->", out_dir)
     return 0

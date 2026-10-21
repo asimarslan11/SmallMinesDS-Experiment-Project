@@ -5,5 +5,5 @@
   "cuda": "12.8",
   "gpu": "NVIDIA GeForce RTX 3080 Laptop GPU",
   "terratorch": "1.2.13",
-  "git_commit": "75451249caf4b97910ca401b991a8f50858a80fa"
+  "git_commit": "ed34a640b105ba58331b12d7a59738af14af327b"
 }

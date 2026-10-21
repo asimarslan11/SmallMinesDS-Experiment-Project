@@ -55,7 +55,8 @@ trained from scratch?
 | C | random | trainable | none |
 | D | random | trainable | random D4 symmetry |
 
-- Budgets N ∈ {1, 3, 5, 10, 20, 50, 100, 250} training images, 5 seeds, 4 conditions → 160 runs.
+- Budgets N ∈ {1, 3, 5, 10, 20, 50, 100, 250} training images with 5 seeds, plus N ∈ {500, 1000, all = 1491}
+  with 3 seeds; 4 conditions → 196 runs.
 - Subsets are nested within a seed and identical across the four conditions.
 - **Protocol:** 50 epochs, evaluate the final weights. AdamW with a per-step cosine
   learning-rate schedule from 5e-3 (first update) to 1e-5 (last update), weight decay 0.01,
@@ -115,10 +116,10 @@ Built with [TerraTorch](https://github.com/IBM/terratorch) 1.2.13, identical in 
 
 ## Results
 
-All 160 runs: `results/main/runs.csv` (one row per run, including confusion counts, learning
+All 196 runs: `results/main/runs.csv` (one row per run, including confusion counts, learning
 rates and the per-epoch training loss), `results/main/summary.md` (all four metrics),
 `results/main/aug_gain.csv`, `results/main/environment.json` (software/hardware).
-Total compute: 68 min on an RTX 3080 Laptop. No run diverged at lr 5e-3 and no metric is NA.
+Total compute: 5.0 h on an RTX 3080 Laptop (68 min for N ≤ 250, 3.8 h for N ≥ 500). No run diverged at lr 5e-3 and no metric is NA.
 
 ![Test performance vs N](results/main/figures/curves.png)
 
@@ -134,6 +135,11 @@ Total compute: 68 min on an RTX 3080 Laptop. No run diverged at lr 5e-3 and no m
 | 50 | 350 | 0.633 ± 0.013 | **0.650 ± 0.008** | 0.550 ± 0.023 | 0.538 ± 0.005 |
 | 100 | 650 | 0.653 ± 0.010 | **0.685 ± 0.007** | 0.559 ± 0.032 | 0.568 ± 0.028 |
 | 250 | 1600 | 0.683 ± 0.004 | **0.707 ± 0.002** | 0.605 ± 0.027 | 0.584 ± 0.028 |
+| 500 | 3150 | 0.697 ± 0.003 | **0.726 ± 0.003** | 0.656 ± 0.003 | 0.632 ± 0.038 |
+| 1000 | 6250 | 0.712 ± 0.003 | **0.738 ± 0.002** | 0.668 ± 0.006 | 0.675 ± 0.002 |
+| all (1491) | 9350 | 0.716 ± 0.003 | **0.745 ± 0.003** | 0.679 ± 0.004 | 0.673 ± 0.009 |
+
+N ≥ 500 rows: 3 seeds. ![Seed variance](results/main/figures/variance.png)
 
 ### Paired augmentation gain in IoU (aug − no aug, same seed and subset; seeds improved)
 
@@ -149,6 +155,9 @@ Total compute: 68 min on an RTX 3080 Laptop. No run diverged at lr 5e-3 and no m
 | 50 | +0.016 ± 0.005 (5/5) | −0.011 ± 0.024 (2/5) |
 | 100 | +0.031 ± 0.007 (5/5) | +0.010 ± 0.007 (5/5) |
 | 250 | +0.024 ± 0.003 (5/5) | −0.021 ± 0.034 (2/5) |
+| 500 | +0.029 ± 0.002 (3/3) | −0.025 ± 0.036 (1/3) |
+| 1000 | +0.025 ± 0.002 (3/3) | +0.007 ± 0.008 (2/3) |
+| all (1491) | +0.029 ± 0.005 (3/3) | −0.006 ± 0.014 (2/3) |
 
 ### Findings
 
