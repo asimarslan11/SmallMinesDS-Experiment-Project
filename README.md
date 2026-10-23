@@ -16,6 +16,10 @@ dataset revision, deterministic training, and the analysis scripts.
 
 ## Setup
 
+On Windows, clone into a short path (e.g. `C:\projects\`) or enable long-path support:
+some PyTorch/TerraTorch package files exceed the default 260-character path limit and
+`pip install` fails in deeply nested folders.
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -43,7 +47,10 @@ python scripts\compare_variants.py [--root results/v1_10ep]                     
 ```
 
 `run_experiments.py` appends one row per run to the runs file and skips runs already present,
-so it can be interrupted and restarted. `--seeds` and `--budgets` restrict the grid.
+so it can be interrupted and restarted. The repository ships the reported results in
+`results/main/runs.csv`, so on a fresh clone the default command finds every run done; to
+rerun from scratch, write to a new file, e.g. `python scripts\run_experiments.py --out results/rerun/runs.csv`
+(then `python scripts\analyze.py --runs results/rerun/runs.csv`). `--seeds` and `--budgets` restrict the grid.
 TerraMind weights are downloaded from Hugging Face on first use.
 
 ## Experiment
