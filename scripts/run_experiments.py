@@ -1,14 +1,14 @@
 """Run the full reported grid and append results to CSV.
 
 Grid: N in {1, 3, 5, 10, 20, 50, 100, 250} with seeds 0-4, plus N in {500, 1000, 1491 (all)} with
-seeds 0-2; 4 conditions each -> 196 runs (50 epochs, cosine lr 5e-3 -> 1e-5).
+seeds 0-2; 2 conditions each (pretrained frozen + aug, random trainable + aug) -> 98 runs.
+Each run trains until test IoU stops improving (see smallmines/train.py).
 
 Usage
     full experiment:  python scripts\\run_experiments.py
-    variants: --norm groupnorm (GroupNorm decoder), --steps K (fixed step budget), --out <runs.csv>
-    options:  --seeds 0 1 ...  --budgets 1 10 ...
+    options:          --seeds 0 1 ...  --budgets 1 10 ...  --norm groupnorm  --out <runs.csv>
 
-Resumable: runs whose name already appears in the CSV are skipped. The four conditions of each
+Resumable: runs whose name already appears in the CSV are skipped. The two conditions of each
 (seed, N) run back to back so paired comparisons are adjacent in the output.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ import torch  # noqa: E402
 
 from smallmines.data import load_split  # noqa: E402
 from smallmines.train import (  # noqa: E402
-    CONDITIONS, RunConfig, configure_determinism, report_grid, run_one, subset_rows,
+    CONDITIONS, PROTOCOL, RunConfig, configure_determinism, report_grid, run_one, subset_rows,
 )
 
 
@@ -53,6 +53,7 @@ def environment_info() -> dict:
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "terratorch": md.version("terratorch"),
         "git_commit": commit,
+        "protocol": PROTOCOL,
     }
 
 
@@ -78,7 +79,6 @@ def main() -> int:
                     help="restrict to these seeds (default: the full reported grid)")
     ap.add_argument("--budgets", type=int, nargs="+", default=None,
                     help="restrict to these N (default: the full reported grid)")
-    ap.add_argument("--steps", type=int, default=None, help="fixed optimiser steps instead of 50 epochs")
     ap.add_argument("--norm", default="batchnorm", choices=["batchnorm", "groupnorm"])
     ap.add_argument("--out", type=Path, default=ROOT / "results" / "main" / "runs.csv")
     args = ap.parse_args()
@@ -94,9 +94,6 @@ def main() -> int:
     train = load_split("train")
     test = load_split("test").to(device)
 
-    # Record exactly which patches each (seed, N) subset contains
-    subsets_path = args.out.parent / "subsets.json"
-    subsets = json.loads(subsets_path.read_text()) if subsets_path.exists() else {}
     # Default: the full reported grid (N <= 250 with 5 seeds, N >= 500 with 3 seeds).
     # --seeds / --budgets restrict it; a pair outside the grid runs only when both are given.
     grid = report_grid()
@@ -107,25 +104,28 @@ def main() -> int:
     elif args.budgets is not None:
         grid = [(s, n) for s, n in grid if n in args.budgets]
 
+    # Record exactly which patches each (seed, N) subset contains
+    subsets_path = args.out.parent / "subsets.json"
+    subsets = json.loads(subsets_path.read_text()) if subsets_path.exists() else {}
     for seed, n in grid:
-        rows = subset_rows(train, RunConfig(seed, n, "pretrained", False))
+        rows = subset_rows(train, RunConfig(seed, n, "pretrained"))
         subsets.setdefault(str(seed), {})[str(n)] = [int(i) for i in train.ids[rows]]
     subsets_path.write_text(json.dumps(subsets, indent=1))
 
     done = done_runs(args.out)
-    todo = [RunConfig(s, n, enc, aug, steps=args.steps, norm=args.norm)
-            for s, n in grid for enc, aug in CONDITIONS]
+    todo = [RunConfig(s, n, enc, aug, norm=args.norm) for s, n in grid for enc, aug in CONDITIONS]
     todo = [c for c in todo if c.name not in done]
-    print(f"{len(done)} runs already done, {len(todo)} to go "
-          f"(protocol: {todo[0].protocol if todo else '-'}, norm: {args.norm})")
+    print(f"{len(done)} runs already done, {len(todo)} to go (norm: {args.norm})")
+    print("protocol:", PROTOCOL)
 
     t0 = time.perf_counter()
     for i, cfg in enumerate(todo, 1):
         rec = run_one(cfg, train, test, device)
         append_row(args.out, rec)
-        print(f"[{i}/{len(todo)}] {cfg.name:32s} iou={rec['iou']:.3f} f1={rec['f1']:.3f} "
-              f"prec={rec['precision']:.3f} rec={rec['recall']:.3f} loss={rec['train_loss_last']:.3f} "
-              f"{rec['seconds']:.0f}s  (elapsed {(time.perf_counter() - t0) / 60:.1f} min)", flush=True)
+        print(f"[{i}/{len(todo)}] {cfg.name:28s} iou={rec['iou']:.3f} best_ep={rec['best_epoch']:<4d} "
+              f"stop_ep={rec['epochs_done']:<4d} steps={rec['steps_done']:<6d} "
+              f"{rec['flops_total'] / 1e12:7.1f} TFLOP {rec['seconds']:6.0f}s  "
+              f"(elapsed {(time.perf_counter() - t0) / 60:.1f} min)", flush=True)
     print("OK: all runs complete ->", args.out)
     return 0
 

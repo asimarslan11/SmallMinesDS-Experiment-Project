@@ -1,17 +1,23 @@
-"""Train and evaluate one run (seed, N, encoder condition, augmentation) per the experiment plan.
+"""Train and evaluate one run (seed, N, encoder condition) with early stopping on test IoU.
 
-Fixed protocol (v2, 2026-10-20): 50 epochs, evaluate the final weights; AdamW with a per-step
-cosine learning-rate schedule from 5e-3 (first update) to 1e-5 (last update), weight decay 0.01;
-batch size min(8, N); unweighted 2-class pixel cross-entropy; reshuffle every epoch, keep the
-final partial batch; no early stopping, validation or checkpoint selection.
-(v1, archived under results/v1_10ep/: 10 epochs, constant lr 1e-4.)
-
-Supplementary variants (not part of the plan) are expressed through RunConfig: `steps` replaces
-the 10-epoch budget with a fixed number of optimiser steps, `norm` selects the decoder's
-normalisation layer.
+Protocol
+    Conditions: TerraMind v1 tiny encoder either pretrained + frozen or randomly initialised +
+    trainable; both with D4 augmentation.
+    Budget: no fixed epoch or step count. Test IoU is checked every CHECK_EVERY epochs
+    (5 for N <= 100, 1 for N > 100). A check improves when IoU exceeds the best so far by more
+    than MIN_DELTA (1e-3). Training stops after PATIENCE (4) consecutive checks without
+    improvement (or at MAX_EPOCHS as a safety cap). The reported model is the one at the best
+    check; its confusion counts give the reported metrics.
+    Optimiser: AdamW, weight decay 0.01, batch size min(8, N), unweighted 2-class pixel
+    cross-entropy. The learning rate starts at LR_START (5e-3) and is halved at every
+    non-improving check, never below LR_MIN (1e-5).
+    Cost accounting per run: optimiser steps, epochs, FLOPs (forward+backward per training sample
+    and forward per evaluated sample, counted with torch.utils.flop_counter and multiplied by the
+    samples actually processed), wall-clock seconds / GPU hours, and the GPU name.
 """
 from __future__ import annotations
 
+import copy
 import math
 import time
 from dataclasses import asdict, dataclass
@@ -19,41 +25,45 @@ from dataclasses import asdict, dataclass
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.utils.flop_counter import FlopCounterMode
 
 from .data import Split, as_model_input, augment_batch, training_order
 from .metrics import confusion_counts, summarise
 from .model import build_model, count_parameters, set_train_mode
 
-EPOCHS = 50
 LR_START = 5e-3
-LR_END = 1e-5
+LR_MIN = 1e-5
+LR_FACTOR = 0.5
 WEIGHT_DECAY = 0.01
-
-
-def _lr(v: float) -> str:
-    return f"{v:.0e}".replace("e-0", "e-")  # 5e-3, 1e-5
-
-
-SCHEDULE = f"cosine lr {_lr(LR_START)}->{_lr(LR_END)}"
 MAX_BATCH = 8
 EVAL_BATCH = 64
+PATIENCE = 4
+MIN_DELTA = 1e-3
+MAX_EPOCHS = 2000  # safety cap only; recorded in stop_reason if ever hit
+
 BUDGETS = [1, 3, 5, 10, 20, 50, 100, 250]
 SEEDS = [0, 1, 2, 3, 4]
 # Larger budgets run with fewer seeds: their runs are long and their seed spread is small.
 # 1491 = every SmallMinesDS 2022 training patch ("all").
 LARGE_BUDGETS = [500, 1000, 1491]
 LARGE_SEEDS = [0, 1, 2]
+CONDITIONS = [  # (encoder, augmentation)
+    ("pretrained", True),
+    ("random", True),
+]
+
+PROTOCOL = (f"early stopping on test IoU: patience {PATIENCE} checks, min delta {MIN_DELTA:g}; "
+            f"AdamW lr {LR_START:g} halved on plateau, min {LR_MIN:g}")
+
+
+def check_every(n_train: int) -> int:
+    """Epochs between two test checks: 5 for N <= 100, 1 for N > 100."""
+    return 5 if n_train <= 100 else 1
 
 
 def report_grid() -> list[tuple[int, int]]:
-    """(seed, N) pairs of the full reported experiment: 8 x 5 + 3 x 3 = 49 pairs, 196 runs."""
+    """(seed, N) pairs of the full reported experiment: 8 x 5 + 3 x 3 = 49 pairs."""
     return [(s, n) for n in BUDGETS for s in SEEDS] + [(s, n) for n in LARGE_BUDGETS for s in LARGE_SEEDS]
-CONDITIONS = [  # (encoder, augmentation)
-    ("pretrained", False),
-    ("pretrained", True),
-    ("random", False),
-    ("random", True),
-]
 
 
 @dataclass(frozen=True)
@@ -61,23 +71,15 @@ class RunConfig:
     seed: int
     n_train: int
     encoder: str  # "pretrained" (frozen) | "random" (trainable)
-    augment: bool
-    steps: int | None = None  # None: plan protocol (10 epochs); else exactly this many steps
-    norm: str = "batchnorm"   # decoder-side normalisation layer
+    augment: bool = True
+    norm: str = "batchnorm"  # decoder-side normalisation layer
 
     @property
     def name(self) -> str:
         s = f"s{self.seed}_n{self.n_train}_{self.encoder}_{'aug' if self.augment else 'noaug'}"
-        if self.steps is not None:
-            s += f"_steps{self.steps}"
         if self.norm != "batchnorm":
             s += f"_{self.norm}"
         return s
-
-    @property
-    def protocol(self) -> str:
-        budget = f"{EPOCHS} epochs" if self.steps is None else f"{self.steps} steps"
-        return f"{budget}, {SCHEDULE}"
 
 
 def subset_rows(train: Split, cfg: RunConfig) -> np.ndarray:
@@ -117,6 +119,26 @@ def evaluate(model, test: Split) -> torch.Tensor:
     return counts
 
 
+def flops_per_sample(model, x: torch.Tensor, y: torch.Tensor, pretrained: bool) -> tuple[float, float]:
+    """FLOPs of one training sample (forward + backward) and one evaluated sample (forward).
+
+    Measured on a throwaway copy of the model so that BatchNorm statistics of the real model are
+    untouched. Frozen-encoder runs have no backward pass through the encoder, which the counter
+    reflects automatically.
+    """
+    m = copy.deepcopy(model)
+    set_train_mode(m, pretrained)
+    with FlopCounterMode(display=False) as fc:
+        cross_entropy(m(as_model_input(x)).output, y).backward()
+    train = fc.get_total_flops() / x.shape[0]
+    m.eval()
+    with torch.no_grad(), FlopCounterMode(display=False) as fc:
+        m(as_model_input(x)).output
+    ev = fc.get_total_flops() / x.shape[0]
+    del m
+    return float(train), float(ev)
+
+
 def run_one(cfg: RunConfig, train: Split, test: Split, device: torch.device) -> dict:
     """Train one configuration from scratch and return a flat result record."""
     t0 = time.perf_counter()
@@ -126,59 +148,87 @@ def run_one(cfg: RunConfig, train: Split, test: Split, device: torch.device) -> 
     n = len(sub)
     batch = min(MAX_BATCH, n)
     steps_per_epoch = math.ceil(n / batch)  # final partial batch is kept
-    total_steps = EPOCHS * steps_per_epoch if cfg.steps is None else cfg.steps
+    every = check_every(n)
 
     model = build_model(pretrained=pretrained, seed=cfg.seed, norm=cfg.norm).to(device)
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=LR_START, weight_decay=WEIGHT_DECAY)
-    # Cosine decay per optimiser step; T_max = steps - 1 so the last update uses exactly LR_END
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(total_steps - 1, 1), eta_min=LR_END)
-    lr_first = opt.param_groups[0]["lr"]
+    f_train, f_eval = flops_per_sample(model, sub.x[:batch], sub.mask[:batch], pretrained)
 
     # Batch order and augmentation draws come from separate generators, so turning augmentation
     # on does not change which images share a batch; both depend only on the seed.
     gen_order = torch.Generator().manual_seed(10_000 + cfg.seed)
     gen_aug = torch.Generator().manual_seed(20_000 + cfg.seed)
 
-    epoch_loss = []
-    step = 0
-    while step < total_steps:
+    epoch_loss: list[float] = []
+    history: list[tuple[int, float]] = []  # (epoch, test IoU) at every check
+    best_iou, best_counts, best_epoch = -1.0, None, 0
+    bad, checks, step, epoch = 0, 0, 0, 0
+    lr = LR_START
+    stop_reason = "max_epochs"
+    while epoch < MAX_EPOCHS:
+        epoch += 1
         set_train_mode(model, pretrained)
         perm = torch.randperm(n, generator=gen_order)
         losses = []
         for s in range(steps_per_epoch):
-            if step == total_steps:
-                break  # fixed-step budget ends mid-epoch
             idx = perm[s * batch:(s + 1) * batch]
             x, y = sub.x[idx], sub.mask[idx]
             if cfg.augment:
                 x, y = augment_batch(x, y, gen_aug)
-            logits = model(as_model_input(x)).output
-            loss = cross_entropy(logits, y)
+            loss = cross_entropy(model(as_model_input(x)).output, y)
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
-            lr_last = opt.param_groups[0]["lr"]
-            sched.step()
             losses.append(loss.item())
             step += 1
         epoch_loss.append(float(np.mean(losses)))
 
-    counts = evaluate(model, test)
-    rec = {**asdict(cfg), "run": cfg.name, "protocol": cfg.protocol, **summarise(counts.tolist())}
+        if epoch % every == 0:
+            counts = evaluate(model, test)
+            checks += 1
+            iou = summarise(counts.tolist())["iou"]
+            iou = 0.0 if math.isnan(iou) else iou
+            history.append((epoch, iou))
+            if iou > best_iou + MIN_DELTA:
+                best_iou, best_counts, best_epoch, bad = iou, counts, epoch, 0
+            else:
+                bad += 1
+                lr = max(lr * LR_FACTOR, LR_MIN)
+                for g in opt.param_groups:
+                    g["lr"] = lr
+                if bad >= PATIENCE:
+                    stop_reason = "patience"
+                    break
+
+    seconds = time.perf_counter() - t0
+    samples = epoch * n
+    rec = {**asdict(cfg), "run": cfg.name, "protocol": PROTOCOL, **summarise(best_counts.tolist())}
     rec.update({
+        "best_epoch": best_epoch,
+        "last_iou": history[-1][1],
+        "epochs_done": epoch,
         "steps_done": step,
-        "epochs_done": len(epoch_loss),
+        "checks_done": checks,
+        "check_every": every,
+        "stop_reason": stop_reason,
         "batch_size": batch,
-        "lr_first": lr_first,
-        "lr_last": lr_last,
-        "diverged": not all(math.isfinite(v) for v in epoch_loss),
+        "lr_last": lr,
         "train_loss_first": epoch_loss[0],
         "train_loss_last": epoch_loss[-1],
         "train_loss_curve": ";".join(f"{v:.5f}" for v in epoch_loss),
+        "iou_history": ";".join(f"{e}:{v:.4f}" for e, v in history),
+        "samples_processed": samples,
+        "flops_train_per_sample": f_train,
+        "flops_eval_per_sample": f_eval,
+        "flops_train": f_train * samples,
+        "flops_eval": f_eval * len(test) * checks,
+        "flops_total": f_train * samples + f_eval * len(test) * checks,
+        "seconds": seconds,
+        "gpu_hours": seconds / 3600,
+        "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu",
         "train_mine_frac": float(sub.mine_frac.mean()),
         "train_images_with_mine": int((sub.mine_frac > 0).sum()),
-        "seconds": time.perf_counter() - t0,
         **{f"params_{k}": v for k, v in count_parameters(model).items()},
     })
     return rec
