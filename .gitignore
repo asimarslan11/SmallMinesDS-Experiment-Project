@@ -18,3 +18,5 @@ outputs/
 .vscode/
 .DS_Store
 Thumbs.db
+# personal presentation notes, not part of the repository
+report/Sunum_Notlari.pdf
