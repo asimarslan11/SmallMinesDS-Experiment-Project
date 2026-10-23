@@ -39,6 +39,15 @@ MAX_BATCH = 8
 EVAL_BATCH = 64
 BUDGETS = [1, 3, 5, 10, 20, 50, 100, 250]
 SEEDS = [0, 1, 2, 3, 4]
+# Larger budgets run with fewer seeds: their runs are long and their seed spread is small.
+# 1491 = every SmallMinesDS 2022 training patch ("all").
+LARGE_BUDGETS = [500, 1000, 1491]
+LARGE_SEEDS = [0, 1, 2]
+
+
+def report_grid() -> list[tuple[int, int]]:
+    """(seed, N) pairs of the full reported experiment: 8 x 5 + 3 x 3 = 49 pairs, 196 runs."""
+    return [(s, n) for n in BUDGETS for s in SEEDS] + [(s, n) for n in LARGE_BUDGETS for s in LARGE_SEEDS]
 CONDITIONS = [  # (encoder, augmentation)
     ("pretrained", False),
     ("pretrained", True),

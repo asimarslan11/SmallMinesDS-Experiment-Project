@@ -28,8 +28,12 @@ python scripts\build_cache.py      # normalised per-split arrays in data/cache/
 ## Run
 
 ```powershell
-python scripts\run_experiments.py  # main experiment: 160 runs, ~70 min on an RTX 3080 Laptop; resumable
+python scripts\run_experiments.py  # full experiment: 196 runs, ~5 h on an RTX 3080 Laptop; resumable
 python scripts\analyze.py          # tables + figures in results/main/
+
+# quicker partial runs, e.g. only N <= 250 (160 runs, ~70 min) or one seed
+python scripts\run_experiments.py --budgets 1 3 5 10 20 50 100 250
+python scripts\run_experiments.py --seeds 0
 
 # optional variants (used for the archived earlier run, see the end of this README)
 python scripts\run_experiments.py --norm groupnorm --out results/groupnorm/runs.csv   # GroupNorm decoder
