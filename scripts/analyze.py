@@ -63,7 +63,7 @@ def conditions(df: pd.DataFrame) -> list[tuple[str, bool]]:
 
 def variant_label(df: pd.DataFrame) -> str:
     norm = df["norm"].iloc[0] if "norm" in df else "batchnorm"
-    short = "early stopping on test IoU (patience 4, min delta 1e-3), lr 5e-3 halved on plateau"
+    short = "early stopping on test IoU (patience 20 epochs, min delta 1e-3), lr 5e-3 halved on plateau"
     if "protocol" in df and "early stopping" not in str(df["protocol"].iloc[0]):
         short = str(df["protocol"].iloc[0])
     return f"{short} · {'GroupNorm' if norm == 'groupnorm' else 'BatchNorm'} decoder"
