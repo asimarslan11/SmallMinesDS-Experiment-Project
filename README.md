@@ -233,6 +233,6 @@ results/main/        current experiment: runs.csv, summary.csv, summary.md, subs
 results/es_4checks/  archived early-stopping grid with 4-check patience
 results/fixed_50ep/  archived 50-epoch grid (4 conditions)
 results/v1_10ep/     archived 10-epoch grid and its variants
-report/              experiment report (PDF)
+report/              final report (TerraMind_SmallMinesDS_Final_Report.pdf) and the Experiment 2 report
 data/                (git-ignored) dataset, split CSVs, cache
 ```
