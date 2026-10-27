@@ -34,7 +34,7 @@ python scripts\build_cache.py      # normalised per-split arrays in data/cache/
 ## Run
 
 ```powershell
-python scripts\run_experiments.py  # full experiment: 98 runs, ~2.5 h on an RTX 3080 Laptop; resumable
+python scripts\run_experiments.py  # full experiment: 98 runs, ~4.1 h on an RTX 3080 Laptop; resumable
 python scripts\analyze.py          # tables + figures in results/main/
 
 # partial runs, e.g. only N <= 250 or one seed
@@ -64,10 +64,9 @@ cost to train?
   N ∈ {500, 1000, all = 1491} with 3 seeds; 2 conditions → 98 runs.
 - Subsets are nested within a seed and identical across the two conditions.
 - **Stopping rule (no fixed epoch or step count).** Test IoU is checked every 5 epochs for
-  N ≤ 100 and after every epoch for N > 100. A check counts as an improvement when IoU exceeds
-  the best so far by more than 10⁻³. Training stops at the first check that comes 20 or more
-  epochs after the best check, so the patience window is 20 epochs for every N (4 checks at
-  N ≤ 100, 20 checks at N > 100). The reported model is the one at the best check.
+  every N. A check counts as an improvement when IoU exceeds the best so far by more than
+  10⁻³. Training stops at the first check that comes 20 or more epochs after the best check
+  (4 non-improving checks). The reported model is the one at the best check.
 - **Optimiser.** AdamW, weight decay 0.01, batch size min(8, N), unweighted 2-class pixel
   cross-entropy, reshuffle every epoch, final partial batch kept. The learning rate starts at
   5e-3 and is halved at every non-improving check, never below 1e-5.
@@ -126,8 +125,8 @@ Built with [TerraTorch](https://github.com/IBM/terratorch) 1.2.13, identical in 
 
 All 98 runs: `results/main/runs.csv` (one row per run with confusion counts, the IoU of every
 check, per-epoch training loss and all cost columns), `results/main/summary.md`,
-`results/main/environment.json`. Total compute: 2.5 h on an RTX 3080 Laptop GPU
-(1.05 GPU hours for the frozen encoder, 1.49 for the trainable one). Every run stopped by the
+`results/main/environment.json`. Total compute: 4.1 h on an RTX 3080 Laptop GPU
+(1.43 GPU hours for the frozen encoder, 2.69 for the trainable one). Every run stopped by the
 patience rule; no metric is NA.
 
 ![IoU vs N](results/main/figures/iou_vs_n.png)
@@ -144,10 +143,10 @@ patience rule; no metric is NA.
 | 20 | 5 | 0.651 ± 0.017 | 0.541 ± 0.012 |
 | 50 | 5 | 0.666 ± 0.009 | 0.550 ± 0.009 |
 | 100 | 5 | 0.694 ± 0.008 | 0.585 ± 0.034 |
-| 250 | 5 | 0.653 ± 0.008 | 0.550 ± 0.008 |
-| 500 | 3 | 0.698 ± 0.004 | 0.563 ± 0.003 |
-| 1000 | 3 | 0.722 ± 0.004 | 0.627 ± 0.034 |
-| all (1491) | 3 | 0.723 ± 0.006 | 0.642 ± 0.016 |
+| 250 | 5 | 0.712 ± 0.003 | 0.616 ± 0.028 |
+| 500 | 3 | 0.729 ± 0.004 | 0.663 ± 0.007 |
+| 1000 | 3 | 0.740 ± 0.002 | 0.680 ± 0.006 |
+| all (1491) | 3 | 0.747 ± 0.001 | 0.688 ± 0.008 |
 
 ### Training cost until early stopping (mean ± std over seeds)
 
@@ -164,10 +163,10 @@ Pretrained, frozen + aug:
 | 20 | 76.0 ± 13.9 | 96.0 ± 13.9 | 288 ± 42 | 0.006 ± 0.001 | 4.6 ± 0.7 | 27.7 ± 4.0 |
 | 50 | 65.0 ± 17.0 | 85.0 ± 17.0 | 595 ± 119 | 0.010 ± 0.002 | 10.1 ± 2.0 | 30.6 ± 6.1 |
 | 100 | 57.0 ± 6.8 | 77.0 ± 6.8 | 1001 ± 88 | 0.015 ± 0.001 | 18.3 ± 1.6 | 36.9 ± 3.2 |
-| 250 | 38.4 ± 10.5 | 58.4 ± 10.5 | 1869 ± 335 | 0.032 ± 0.006 | 34.7 ± 6.2 | 105.1 ± 18.9 |
-| 500 | 35.0 ± 22.6 | 55.0 ± 22.6 | 3465 ± 1421 | 0.052 ± 0.021 | 65.3 ± 26.8 | 131.6 ± 54.0 |
-| 1000 | 25.7 ± 8.5 | 45.7 ± 8.5 | 5708 ± 1062 | 0.077 ± 0.014 | 108.4 ± 20.2 | 163.5 ± 30.4 |
-| all (1491) | 19.0 ± 10.0 | 39.0 ± 10.0 | 7293 ± 1876 | 0.095 ± 0.024 | 138.0 ± 35.5 | 185.1 ± 47.6 |
+| 250 | 62.0 ± 14.4 | 82.0 ± 14.4 | 2624 ± 459 | 0.034 ± 0.006 | 48.7 ± 8.5 | 68.4 ± 12.0 |
+| 500 | 53.3 ± 15.5 | 73.3 ± 15.5 | 4620 ± 974 | 0.059 ± 0.012 | 87.0 ± 18.3 | 104.7 ± 22.1 |
+| 1000 | 53.3 ± 4.7 | 73.3 ± 4.7 | 9167 ± 589 | 0.116 ± 0.007 | 174.1 ± 11.2 | 191.8 ± 12.3 |
+| all (1491) | 55.0 ± 7.1 | 75.0 ± 7.1 | 14025 ± 1322 | 0.172 ± 0.017 | 265.4 ± 25.0 | 283.5 ± 26.7 |
 
 Random init, trainable + aug:
 
@@ -180,10 +179,10 @@ Random init, trainable + aug:
 | 20 | 35.0 ± 27.9 | 55.0 ± 27.9 | 165 ± 84 | 0.005 ± 0.002 | 6.1 ± 3.1 | 19.4 ± 9.8 |
 | 50 | 39.0 ± 5.8 | 59.0 ± 5.8 | 413 ± 41 | 0.010 ± 0.001 | 16.4 ± 1.6 | 30.6 ± 3.0 |
 | 100 | 49.0 ± 26.3 | 69.0 ± 26.3 | 897 ± 342 | 0.021 ± 0.008 | 38.3 ± 14.6 | 54.9 ± 21.0 |
-| 250 | 6.8 ± 2.0 | 26.8 ± 2.0 | 858 ± 65 | 0.022 ± 0.002 | 37.1 ± 2.8 | 69.5 ± 5.3 |
-| 500 | 11.3 ± 6.1 | 31.3 ± 6.1 | 1974 ± 386 | 0.046 ± 0.009 | 86.9 ± 17.0 | 124.7 ± 24.4 |
-| 1000 | 38.7 ± 26.1 | 58.7 ± 26.1 | 7333 ± 3260 | 0.162 ± 0.069 | 325.3 ± 144.6 | 396.1 ± 176.1 |
-| all (1491) | 24.0 ± 13.0 | 44.0 ± 13.0 | 8228 ± 2424 | 0.173 ± 0.051 | 363.7 ± 107.2 | 416.8 ± 122.8 |
+| 250 | 52.0 ± 19.1 | 72.0 ± 19.1 | 2304 ± 612 | 0.047 ± 0.012 | 99.8 ± 26.5 | 117.2 ± 31.1 |
+| 500 | 73.3 ± 12.5 | 93.3 ± 12.5 | 5880 ± 786 | 0.122 ± 0.015 | 258.7 ± 34.6 | 281.3 ± 37.6 |
+| 1000 | 75.0 ± 25.5 | 95.0 ± 25.5 | 11875 ± 3187 | 0.247 ± 0.069 | 526.7 ± 141.4 | 549.7 ± 147.5 |
+| all (1491) | 78.3 ± 8.5 | 98.3 ± 8.5 | 18388 ± 1589 | 0.370 ± 0.031 | 812.9 ± 70.3 | 836.6 ± 72.3 |
 
 GPU: NVIDIA GeForce RTX 3080 Laptop GPU. Per-sample cost: 2.37 GFLOP per training sample for
 the frozen encoder (decoder forward + backward only) vs 5.54 GFLOP for the trainable one;
@@ -192,26 +191,27 @@ the frozen encoder (decoder forward + backward only) vs 5.54 GFLOP for the train
 
 ### Findings
 
-- **The frozen pretrained encoder wins at every N ≥ 5 in 5/5 seeds** (3/5 at N = 1 and 3), by
-  +0.06 IoU at N = 3–5 and +0.08–0.14 from N = 10 on (0.723 vs 0.642 with all images).
-- **Data efficiency.** With 20 images the frozen encoder (0.651) already exceeds what the
-  trainable encoder reaches with all 1,491 (0.642).
+- **The frozen pretrained encoder wins at every N ≥ 5 in every seed** (3/5 seeds at N = 1 and
+  3), by +0.06 IoU at N = 3–5, +0.08–0.12 at N = 10–250 and +0.06 from N = 500 on
+  (0.747 vs 0.688 with all images).
+- **Data efficiency.** With 100 images the frozen encoder (0.694) already exceeds what the
+  trainable encoder reaches with all 1,491 (0.688).
+- **IoU rises with N for both encoders** and flattens for the frozen one from N = 500
+  (0.729 → 0.740 → 0.747).
 - **Cost.** The frozen encoder trains with 2.3× fewer FLOPs per sample; with all images it
-  needs 0.095 vs 0.173 GPU hours and 185 vs 417 TFLOP. At N ≤ 100 both stop after a similar
+  needs 0.172 vs 0.370 GPU hours and 284 vs 837 TFLOP. At N ≤ 100 both stop after a similar
   number of epochs and cost about the same.
-- **Seed variance** is small for the frozen encoder from N = 3 on (std ≤ 0.023) and larger for
-  the trainable one (up to 0.057).
-- **Effect of the check cadence.** From N = 250 the check runs every epoch instead of every
-  5 epochs, and the learning rate is halved at every non-improving check, so at N > 100 it
-  decays up to five times faster per epoch. The frozen encoder's IoU at N = 250 (0.653) is
-  therefore below N = 100 (0.694) even though the patience window is 20 epochs for every N.
-  The comparison between the two encoders is unaffected (both follow the same rule), but the
-  IoU curve across budgets mixes training-set size with this change in learning-rate behaviour.
+- **Seed variance** is small for the frozen encoder from N = 3 on (std ≤ 0.023, ≤ 0.004 from
+  N = 250) and larger for the trainable one (up to 0.057).
 
 ## Earlier protocols (archived)
 
 Earlier grids are kept for reference and are not part of the report:
 
+- `results/es_check1/main/`: the same early-stopping protocol, but with the test check after
+  every epoch for N > 100. Because the learning rate is halved at every non-improving check,
+  it decayed up to five times faster per epoch there, and IoU at N ≥ 250 was 0.02–0.06 lower
+  (frozen encoder: 0.653 at N = 250, 0.723 with all images).
 - `results/es_4checks/main/`: the same early-stopping protocol with patience defined as
   4 checks instead of 20 epochs (identical for N ≤ 100; at N > 100 runs stopped after
   10–22 epochs).
@@ -230,6 +230,7 @@ scripts/             check_gpu.py, download_data.py, build_cache.py, run_experim
                      analyze.py, compare_variants.py
 results/main/        current experiment: runs.csv, summary.csv, summary.md, subsets.json,
                      environment.json, figures/
+results/es_check1/   archived early-stopping grid with a check after every epoch for N > 100
 results/es_4checks/  archived early-stopping grid with 4-check patience
 results/fixed_50ep/  archived 50-epoch grid (4 conditions)
 results/v1_10ep/     archived 10-epoch grid and its variants

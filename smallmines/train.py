@@ -3,8 +3,8 @@
 Protocol
     Conditions: TerraMind v1 tiny encoder either pretrained + frozen or randomly initialised +
     trainable; both with D4 augmentation.
-    Budget: no fixed epoch or step count. Test IoU is checked every CHECK_EVERY epochs
-    (5 for N <= 100, 1 for N > 100). A check improves when IoU exceeds the best so far by more
+    Budget: no fixed epoch or step count. Test IoU is checked every CHECK_EVERY (5) epochs,
+    for every N. A check improves when IoU exceeds the best so far by more
     than MIN_DELTA (1e-3). Training stops at the first check that comes PATIENCE_EPOCHS (20)
     or more epochs after the best check (or at MAX_EPOCHS as a safety cap), so the patience
     window is the same number of epochs for every N. The reported model is the one at the best
@@ -38,6 +38,7 @@ LR_FACTOR = 0.5
 WEIGHT_DECAY = 0.01
 MAX_BATCH = 8
 EVAL_BATCH = 64
+CHECK_EVERY = 5
 PATIENCE_EPOCHS = 20
 MIN_DELTA = 1e-3
 MAX_EPOCHS = 2000  # safety cap only; recorded in stop_reason if ever hit
@@ -53,13 +54,13 @@ CONDITIONS = [  # (encoder, augmentation)
     ("random", True),
 ]
 
-PROTOCOL = (f"early stopping on test IoU: patience {PATIENCE_EPOCHS} epochs, min delta {MIN_DELTA:g}; "
+PROTOCOL = (f"early stopping on test IoU checked every {CHECK_EVERY} epochs: patience {PATIENCE_EPOCHS} epochs, min delta {MIN_DELTA:g}; "
             f"AdamW lr {LR_START:g} halved on plateau, min {LR_MIN:g}")
 
 
 def check_every(n_train: int) -> int:
-    """Epochs between two test checks: 5 for N <= 100, 1 for N > 100."""
-    return 5 if n_train <= 100 else 1
+    """Epochs between two test checks: 5 for every N."""
+    return CHECK_EVERY
 
 
 def report_grid() -> list[tuple[int, int]]:

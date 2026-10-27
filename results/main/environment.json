@@ -5,6 +5,6 @@
   "cuda": "12.8",
   "gpu": "NVIDIA GeForce RTX 3080 Laptop GPU",
   "terratorch": "1.2.13",
-  "git_commit": "5ea5ec032cb7fbb6742a3ace32fe714e39c9995b",
-  "protocol": "early stopping on test IoU: patience 20 epochs, min delta 0.001; AdamW lr 0.005 halved on plateau, min 1e-05"
+  "git_commit": "7154ae14370678b88145ea8fcf7bfb66444e48e5",
+  "protocol": "early stopping on test IoU checked every 5 epochs: patience 20 epochs, min delta 0.001; AdamW lr 0.005 halved on plateau, min 1e-05"
 }
