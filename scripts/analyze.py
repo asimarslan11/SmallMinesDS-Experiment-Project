@@ -30,11 +30,12 @@ sys.path.insert(0, str(ROOT))
 TRAIN_SIZE = 1491  # all SmallMinesDS 2022 training patches
 METRICS = ["iou", "f1", "precision", "recall"]
 COST = ["steps_done", "epochs_done", "best_epoch", "checks_done", "gpu_hours", "flops_train", "flops_total"]
-ENCODER_LABEL = {"pretrained": "TerraMind pretrained, frozen", "random": "Random init, trainable"}
+ENCODER_LABEL = {"pretrained": "TerraMind pretrained, frozen", "random": "Random init, trainable",
+                 "unet": "Plain UNet, trainable"}
 AUG_LABEL = {False: "no aug", True: "D4 aug"}
 
 # Light-mode palette: encoder -> hue, augmentation -> line style
-COLOR = {"pretrained": "#2a78d6", "random": "#eb6834"}
+COLOR = {"pretrained": "#2a78d6", "random": "#eb6834", "unet": "#1a9e6e"}
 STYLE = {False: "--", True: "-"}
 TEXT, TEXT2, GRID, SURFACE = "#0b0b0b", "#52514e", "#dcdbd6", "#fcfcfb"
 
@@ -56,7 +57,7 @@ def load_runs(path: Path) -> pd.DataFrame:
 
 
 def conditions(df: pd.DataFrame) -> list[tuple[str, bool]]:
-    order = [("pretrained", False), ("pretrained", True), ("random", False), ("random", True)]
+    order = [("pretrained", False), ("pretrained", True), ("random", False), ("random", True), ("unet", True)]
     present = set(zip(df["encoder"], df["augment"]))
     return [c for c in order if c in present]
 
@@ -139,7 +140,7 @@ def plot_iou(summary: pd.DataFrame, conds, out: Path, label: str) -> None:
 def plot_variance(df: pd.DataFrame, conds, out: Path, label: str) -> None:
     """Every seed's IoU as a translucent dot, with the mean line and a translucent ±std band."""
     k = len(conds)
-    ncol = 2 if k > 1 else 1
+    ncol = k if k <= 3 else 2
     nrow = math.ceil(k / ncol)
     fig, axes = plt.subplots(nrow, ncol, figsize=(5 * ncol, 3.8 * nrow), facecolor=SURFACE,
                              sharex=True, sharey=True, squeeze=False)

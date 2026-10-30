@@ -2,7 +2,8 @@
 
 Protocol
     Conditions: TerraMind v1 tiny encoder either pretrained + frozen or randomly initialised +
-    trainable; both with D4 augmentation.
+    trainable (Experiment 2), and a plain UNet of the same parameter count trained from scratch
+    (Experiment 3); all with D4 augmentation.
     Budget: no fixed epoch or step count. Test IoU is checked every CHECK_EVERY (5) epochs,
     for every N. A check improves when IoU exceeds the best so far by more
     than MIN_DELTA (1e-3). Training stops at the first check that comes PATIENCE_EPOCHS (20)
@@ -30,7 +31,7 @@ from torch.utils.flop_counter import FlopCounterMode
 
 from .data import Split, as_model_input, augment_batch, training_order
 from .metrics import confusion_counts, summarise
-from .model import build_model, count_parameters, set_train_mode
+from .model import build_model, build_unet, count_parameters, set_train_mode
 
 LR_START = 5e-3
 LR_MIN = 1e-5
@@ -52,6 +53,7 @@ LARGE_SEEDS = [0, 1, 2]
 CONDITIONS = [  # (encoder, augmentation)
     ("pretrained", True),
     ("random", True),
+    ("unet", True),
 ]
 
 PROTOCOL = (f"early stopping on test IoU checked every {CHECK_EVERY} epochs: patience {PATIENCE_EPOCHS} epochs, min delta {MIN_DELTA:g}; "
@@ -72,7 +74,7 @@ def report_grid() -> list[tuple[int, int]]:
 class RunConfig:
     seed: int
     n_train: int
-    encoder: str  # "pretrained" (frozen) | "random" (trainable)
+    encoder: str  # "pretrained" (frozen) | "random" (trainable) | "unet" (plain UNet, trainable)
     augment: bool = True
     norm: str = "batchnorm"  # decoder-side normalisation layer
 
@@ -152,7 +154,10 @@ def run_one(cfg: RunConfig, train: Split, test: Split, device: torch.device) -> 
     steps_per_epoch = math.ceil(n / batch)  # final partial batch is kept
     every = check_every(n)
 
-    model = build_model(pretrained=pretrained, seed=cfg.seed, norm=cfg.norm).to(device)
+    if cfg.encoder == "unet":
+        model = build_unet(seed=cfg.seed).to(device)
+    else:
+        model = build_model(pretrained=pretrained, seed=cfg.seed, norm=cfg.norm).to(device)
     params = [p for p in model.parameters() if p.requires_grad]
     opt = torch.optim.AdamW(params, lr=LR_START, weight_decay=WEIGHT_DECAY)
     f_train, f_eval = flops_per_sample(model, sub.x[:batch], sub.mask[:batch], pretrained)

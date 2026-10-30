@@ -1,4 +1,5 @@
-"""TerraMind v1 tiny encoder + shallow UNet decoder, built with TerraTorch.
+"""TerraMind v1 tiny encoder + shallow UNet decoder, built with TerraTorch; plus a plain UNet of
+the same parameter count as the baseline of Experiment 3 (see UNet below).
 
 Architecture (identical in every condition)
     encoder : terramind_v1_tiny, inputs S2L2A (10 bands) + S1RTC (2 bands), img_size 128,
@@ -89,6 +90,75 @@ def build_model(pretrained: bool, seed: int, norm: str = "batchnorm") -> nn.Modu
         for p in model.encoder.parameters():
             p.requires_grad_(False)
     return model
+
+
+UNET_BASE = 30  # widths 30/60/120/240/480 -> 6.83 M parameters, within 1% of TerraMind + decoder (6.90 M)
+
+
+class UNetOutput:
+    """Mimics TerraTorch's ModelOutput so the training loop can use `.output` for both models."""
+
+    def __init__(self, output: torch.Tensor):
+        self.output = output
+
+
+def _double_conv(c_in: int, c_out: int) -> nn.Sequential:
+    return nn.Sequential(
+        nn.Conv2d(c_in, c_out, 3, padding=1, bias=False), nn.BatchNorm2d(c_out), nn.ReLU(inplace=True),
+        nn.Conv2d(c_out, c_out, 3, padding=1, bias=False), nn.BatchNorm2d(c_out), nn.ReLU(inplace=True),
+    )
+
+
+class _UNetEncoder(nn.Module):
+    def __init__(self, c_in: int, widths: list[int]):
+        super().__init__()
+        self.stem = _double_conv(c_in, widths[0])
+        self.downs = nn.ModuleList(
+            nn.Sequential(nn.MaxPool2d(2), _double_conv(a, b)) for a, b in zip(widths[:-1], widths[1:]))
+
+    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
+        feats = [self.stem(x)]
+        for down in self.downs:
+            feats.append(down(feats[-1]))
+        return feats
+
+
+class _UNetDecoder(nn.Module):
+    def __init__(self, widths: list[int], num_classes: int):
+        super().__init__()
+        rev = widths[::-1]
+        self.ups = nn.ModuleList(nn.ConvTranspose2d(a, b, 2, stride=2) for a, b in zip(rev[:-1], rev[1:]))
+        self.convs = nn.ModuleList(_double_conv(2 * b, b) for b in rev[1:])
+        self.head = nn.Conv2d(widths[0], num_classes, 1)
+
+    def forward(self, feats: list[torch.Tensor]) -> torch.Tensor:
+        x = feats[-1]
+        for up, conv, skip in zip(self.ups, self.convs, feats[-2::-1]):
+            x = conv(torch.cat([up(x), skip], dim=1))
+        return self.head(x)
+
+
+class UNet(nn.Module):
+    """Plain UNet (Ronneberger et al. 2015) on the same 12 input channels, trained from scratch.
+
+    Four 2x poolings take 128x128 to an 8x8 bottleneck, the same grid as TerraMind's tokens.
+    Every conv is 3x3 + BatchNorm + ReLU; upsampling by transposed conv, skip by concatenation.
+    """
+
+    def __init__(self, base: int = UNET_BASE, c_in: int = len(S2_BANDS) + 2, num_classes: int = NUM_CLASSES):
+        super().__init__()
+        widths = [base * 2 ** i for i in range(5)]
+        self.encoder = _UNetEncoder(c_in, widths)
+        self.decoder = _UNetDecoder(widths, num_classes)
+
+    def forward(self, x: dict[str, torch.Tensor]) -> UNetOutput:
+        return UNetOutput(self.decoder(self.encoder(torch.cat([x["S2L2A"], x["S1RTC"]], dim=1))))
+
+
+def build_unet(seed: int) -> nn.Module:
+    """UNet with every weight initialised from `seed` (PyTorch default initialisation)."""
+    torch.manual_seed(seed)
+    return UNet()
 
 
 def set_train_mode(model: nn.Module, pretrained: bool) -> None:

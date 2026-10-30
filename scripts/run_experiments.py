@@ -1,12 +1,13 @@
 """Run the full reported grid and append results to CSV.
 
 Grid: N in {1, 3, 5, 10, 20, 50, 100, 250} with seeds 0-4, plus N in {500, 1000, 1491 (all)} with
-seeds 0-2; 2 conditions each (pretrained frozen + aug, random trainable + aug) -> 98 runs.
+seeds 0-2; 3 conditions each (TerraMind pretrained frozen + aug, TerraMind random init trainable
++ aug, plain UNet of the same size + aug) -> 147 runs.
 Each run trains until test IoU stops improving (see smallmines/train.py).
 
 Usage
     full experiment:  python scripts\\run_experiments.py
-    options:          --seeds 0 1 ...  --budgets 1 10 ...  --norm groupnorm  --out <runs.csv>
+    options:          --seeds 0 1 ...  --budgets 1 10 ...  --encoders unet  --norm groupnorm  --out <runs.csv>
 
 Resumable: runs whose name already appears in the CSV are skipped. The two conditions of each
 (seed, N) run back to back so paired comparisons are adjacent in the output.
@@ -80,6 +81,8 @@ def main() -> int:
     ap.add_argument("--budgets", type=int, nargs="+", default=None,
                     help="restrict to these N (default: the full reported grid)")
     ap.add_argument("--norm", default="batchnorm", choices=["batchnorm", "groupnorm"])
+    ap.add_argument("--encoders", nargs="+", default=None, choices=[e for e, _ in CONDITIONS],
+                    help="restrict to these conditions (default: all)")
     ap.add_argument("--out", type=Path, default=ROOT / "results" / "main" / "runs.csv")
     args = ap.parse_args()
 
@@ -113,7 +116,8 @@ def main() -> int:
     subsets_path.write_text(json.dumps(subsets, indent=1))
 
     done = done_runs(args.out)
-    todo = [RunConfig(s, n, enc, aug, norm=args.norm) for s, n in grid for enc, aug in CONDITIONS]
+    todo = [RunConfig(s, n, enc, aug, norm=args.norm) for s, n in grid for enc, aug in CONDITIONS
+            if args.encoders is None or enc in args.encoders]
     todo = [c for c in todo if c.name not in done]
     print(f"{len(done)} runs already done, {len(todo)} to go (norm: {args.norm})")
     print("protocol:", PROTOCOL)
