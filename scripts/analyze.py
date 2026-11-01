@@ -1,6 +1,7 @@
 """Summarise a runs.csv: IoU and training cost vs N, seed variance, and tables.
 
-Usage: .venv\\Scripts\\python scripts\\analyze.py [--runs results/main/runs.csv]
+Usage: .venv\\Scripts\\python scripts\\analyze.py [--runs results/main/runs.csv [more runs.csv ...]]
+       several runs files are combined; outputs go next to the first one
 
 Outputs (next to the runs file)
     summary.csv            mean/std over seeds of every metric and cost column per (N, condition)
@@ -31,11 +32,14 @@ TRAIN_SIZE = 1491  # all SmallMinesDS 2022 training patches
 METRICS = ["iou", "f1", "precision", "recall"]
 COST = ["steps_done", "epochs_done", "best_epoch", "checks_done", "gpu_hours", "flops_train", "flops_total"]
 ENCODER_LABEL = {"pretrained": "TerraMind pretrained, frozen", "random": "Random init, trainable",
-                 "unet": "Plain UNet, trainable"}
+                 "unet": "Plain UNet, trainable", "unet_half": "Plain UNet (half size), trainable",
+                 "dofa": "DOFA pretrained, frozen", "resnet50": "SSL4EO ResNet50 pretrained, frozen",
+                 "alphaearth_xgb": "AlphaEarth embeddings + XGBoost"}
 AUG_LABEL = {False: "no aug", True: "D4 aug"}
 
 # Light-mode palette: encoder -> hue, augmentation -> line style
-COLOR = {"pretrained": "#2a78d6", "random": "#eb6834", "unet": "#1a9e6e"}
+COLOR = {"pretrained": "#2a78d6", "random": "#eb6834", "unet": "#1a9e6e", "unet_half": "#7cc4a4",
+         "dofa": "#8a5cd1", "resnet50": "#c8417f", "alphaearth_xgb": "#9a7b1c"}
 STYLE = {False: "--", True: "-"}
 TEXT, TEXT2, GRID, SURFACE = "#0b0b0b", "#52514e", "#dcdbd6", "#fcfcfb"
 
@@ -47,17 +51,20 @@ def n_label(n: int) -> str:
 
 
 def cond_label(enc: str, aug: bool) -> str:
+    if enc == "alphaearth_xgb":  # augmentation does not apply to this per-pixel model
+        return ENCODER_LABEL[enc]
     return f"{ENCODER_LABEL[enc]}, {AUG_LABEL[aug]}"
 
 
-def load_runs(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
+def load_runs(paths: list[Path]) -> pd.DataFrame:
+    df = pd.concat([pd.read_csv(p) for p in paths], ignore_index=True)
     df["augment"] = df["augment"].astype(str).str.lower().eq("true")
     return df
 
 
 def conditions(df: pd.DataFrame) -> list[tuple[str, bool]]:
-    order = [("pretrained", False), ("pretrained", True), ("random", False), ("random", True), ("unet", True)]
+    order = [("pretrained", False), ("pretrained", True), ("random", False), ("random", True), ("unet", True),
+             ("unet_half", True), ("dofa", True), ("resnet50", True), ("alphaearth_xgb", False)]
     present = set(zip(df["encoder"], df["augment"]))
     return [c for c in order if c in present]
 
@@ -84,7 +91,9 @@ def summarise(df: pd.DataFrame) -> pd.DataFrame:
 
 def paired_gain(df: pd.DataFrame) -> pd.DataFrame | None:
     """aug - noaug within each (seed, N, encoder); None when one side is absent."""
-    if not (df["augment"].any() and (~df["augment"]).any()):
+    both = df.groupby("encoder")["augment"].nunique()
+    df = df[df["encoder"].isin(both[both == 2].index)]
+    if df.empty:
         return None
     key = ["seed", "n_train", "encoder"]
     d = (df[df["augment"]].set_index(key)[METRICS] - df[~df["augment"]].set_index(key)[METRICS]).reset_index()
@@ -140,7 +149,7 @@ def plot_iou(summary: pd.DataFrame, conds, out: Path, label: str) -> None:
 def plot_variance(df: pd.DataFrame, conds, out: Path, label: str) -> None:
     """Every seed's IoU as a translucent dot, with the mean line and a translucent ±std band."""
     k = len(conds)
-    ncol = k if k <= 3 else 2
+    ncol = k if k <= 3 else (4 if k > 6 else 3)
     nrow = math.ceil(k / ncol)
     fig, axes = plt.subplots(nrow, ncol, figsize=(5 * ncol, 3.8 * nrow), facecolor=SURFACE,
                              sharex=True, sharey=True, squeeze=False)
@@ -154,6 +163,12 @@ def plot_variance(df: pd.DataFrame, conds, out: Path, label: str) -> None:
         ax.scatter(sub["n_train"], sub["iou"], s=22, color=c, alpha=0.35, lw=0)
         _style_axis(ax, cond_label(enc, aug))
         ax.set_ylim(0.2, 0.85)
+    for i, ax in enumerate(axes.flat):
+        if i >= k:
+            ax.set_visible(False)
+        elif i + ncol >= k:  # nothing drawn below this panel: give it its own x labels
+            ax.xaxis.set_tick_params(labelbottom=True)
+            ax.set_xlabel("Training images N (log scale)", color=TEXT2)
     for ax in axes[-1]:
         ax.set_xlabel("Training images N (log scale)", color=TEXT2)
     for ax in axes[:, 0]:
@@ -172,6 +187,8 @@ def plot_cost(summary: pd.DataFrame, conds, out: Path, label: str) -> None:
     for ax, (m, title, scale) in zip(axes, panels):
         for enc, aug in conds:
             s = _series(summary, enc, aug, m)
+            if s["mean"].isna().all():
+                continue
             c = COLOR[enc]
             lo = np.maximum((s["mean"] - s["std"]) / scale, 1e-9)
             ax.fill_between(s["n_train"], lo, (s["mean"] + s["std"]) / scale, color=c, alpha=0.12, lw=0)
@@ -207,6 +224,8 @@ def markdown_tables(summary: pd.DataFrame, conds, df: pd.DataFrame) -> str:
                      + " | ".join(_cell(summary, n, e, a, "iou") for e, a in conds) + " |")
     lines.append("")
     for enc, aug in conds:
+        if summary[(summary["encoder"] == enc) & (summary["metric"] == "steps_done")]["mean"].isna().all():
+            continue  # no step / FLOP accounting (AlphaEarth + XGBoost)
         lines += [f"### Training cost until early stopping — {cond_label(enc, aug)} (mean ± std over seeds)", "",
                   "| N | best epoch | stop epoch | steps | GPU hours | train TFLOP | total TFLOP |",
                   "|---|---|---|---|---|---|---|"]
@@ -229,10 +248,10 @@ def markdown_tables(summary: pd.DataFrame, conds, df: pd.DataFrame) -> str:
 def main() -> int:
     global BUDGETS
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", type=Path, default=ROOT / "results" / "main" / "runs.csv")
+    ap.add_argument("--runs", type=Path, nargs="+", default=[ROOT / "results" / "main" / "runs.csv"])
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # tables contain ± and −; Windows consoles default to cp1252
-    out_dir = args.runs.parent
+    out_dir = args.runs[0].parent
     (out_dir / "figures").mkdir(parents=True, exist_ok=True)
 
     df = load_runs(args.runs)

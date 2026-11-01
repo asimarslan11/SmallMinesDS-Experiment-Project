@@ -1,5 +1,6 @@
-"""TerraMind v1 tiny encoder + shallow UNet decoder, built with TerraTorch; plus a plain UNet of
-the same parameter count as the baseline of Experiment 3 (see UNet below).
+"""TerraMind v1 tiny encoder + shallow UNet decoder, built with TerraTorch; two other frozen
+foundation-model encoders with the same decoder (DOFA base, SSL4EO-S12 ResNet50; see
+build_foundation_model); and plain UNets as from-scratch baselines (see UNet below).
 
 Architecture (identical in every condition)
     encoder : terramind_v1_tiny, inputs S2L2A (10 bands) + S1RTC (2 bands), img_size 128,
@@ -19,7 +20,7 @@ import warnings
 import torch
 from torch import nn
 
-from .data import IMG_SIZE, S2_BANDS
+from .data import IMG_SIZE, S1_BANDS, S2_BANDS, S2_MEAN, S2_STD
 
 ENCODER_LAYERS = [2, 5, 8, 11]
 DECODER_CHANNELS = [128, 64, 32, 16]
@@ -92,7 +93,10 @@ def build_model(pretrained: bool, seed: int, norm: str = "batchnorm") -> nn.Modu
     return model
 
 
-UNET_BASE = 30  # widths 30/60/120/240/480 -> 6.83 M parameters, within 1% of TerraMind + decoder (6.90 M)
+# Plain UNet base widths: 30 -> 6.83 M params, within 1% of TerraMind + decoder (6.90 M), Experiment 3;
+# 21 -> 3.35 M, half of that (Experiment 3 v2). Widths double at each of the 5 stages.
+UNET_BASE = 30
+UNET_HALF_BASE = 21
 
 
 class UNetOutput:
@@ -155,10 +159,83 @@ class UNet(nn.Module):
         return UNetOutput(self.decoder(self.encoder(torch.cat([x["S2L2A"], x["S1RTC"]], dim=1))))
 
 
-def build_unet(seed: int) -> nn.Module:
+def build_unet(seed: int, base: int = UNET_BASE) -> nn.Module:
     """UNet with every weight initialised from `seed` (PyTorch default initialisation)."""
     torch.manual_seed(seed)
-    return UNet()
+    return UNet(base=base)
+
+
+_S2_MEAN_T = torch.tensor(S2_MEAN).view(1, -1, 1, 1)
+_S2_STD_T = torch.tensor(S2_STD).view(1, -1, 1, 1)
+
+
+def _dofa_input(x: dict[str, torch.Tensor]) -> torch.Tensor:
+    # DOFA was pretrained on per-band standardised inputs: the cached z-scores are used as they are
+    return torch.cat([x["S2L2A"], x["S1RTC"]], dim=1)
+
+
+def _ssl4eo_s2_input(x: dict[str, torch.Tensor]) -> torch.Tensor:
+    # SSL4EO-S12 MoCo weights expect S2 reflectance / 10000; undo the cached standardisation
+    s2 = x["S2L2A"]
+    return (s2 * _S2_STD_T.to(s2.device) + _S2_MEAN_T.to(s2.device)) / 10000.0
+
+
+FOUNDATION_MODELS = {
+    # name: (TerraTorch backbone, its band names, backbone kwargs, necks, input adapter)
+    "dofa": ("dofa_base_patch16_224", S2_BANDS + S1_BANDS,
+             {"backbone_img_size": IMG_SIZE, "backbone_out_indices": ENCODER_LAYERS},
+             [{"name": "ReshapeTokensToImage", "remove_cls_token": True},
+              {"name": "LearnedInterpolateToPyramidal"}], _dofa_input),
+    "resnet50": ("ssl4eos12_resnet50_sentinel2_all_moco", S2_BANDS,
+                 {"backbone_out_indices": [1, 2, 3, 4]}, [], _ssl4eo_s2_input),
+}
+
+
+class AdaptedModel(nn.Module):
+    """A TerraTorch model fed from the modality dict through a model-specific input adapter."""
+
+    def __init__(self, model: nn.Module, adapter):
+        super().__init__()
+        self.model = model
+        self.adapter = adapter
+
+    @property
+    def encoder(self) -> nn.Module:
+        return self.model.encoder
+
+    def forward(self, x: dict[str, torch.Tensor]):
+        return self.model(self.adapter(x))
+
+
+def build_foundation_model(name: str, seed: int) -> nn.Module:
+    """Frozen pretrained DOFA base (S2 + S1, 12 bands) or SSL4EO-S12 ResNet50 MoCo (S2, 10 bands)
+    encoder with the same UNet decoder (128/64/32/16) and head as the TerraMind model.
+
+    DOFA: layers 2/5/8/11 -> 8x8 maps (CLS token dropped) -> learned pyramid 32/16/8/4 px.
+    ResNet50: its own stages at 32/16/8/4 px (strides 4-32). The decoder side is re-initialised
+    from the same seed-derived generator as in build_model.
+    """
+    from terratorch.models import EncoderDecoderFactory
+
+    backbone, bands, kwargs, necks, adapter = FOUNDATION_MODELS[name]
+    torch.manual_seed(seed)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model = EncoderDecoderFactory().build_model(
+            task="segmentation", backbone=backbone, backbone_pretrained=True,
+            backbone_model_bands=bands, **kwargs, necks=necks or None,
+            decoder="UNetDecoder", decoder_channels=DECODER_CHANNELS, num_classes=NUM_CLASSES,
+            head_dropout=0.0, rescale=True,
+        )
+    torch.manual_seed(30_000 + seed)
+    # without necks (ResNet50) TerraTorch's neck is a plain function, not a module
+    for part in (model.neck, model.decoder, model.head):
+        for m in part.modules() if isinstance(part, nn.Module) else ():
+            if hasattr(m, "reset_parameters"):
+                m.reset_parameters()
+    for p in model.encoder.parameters():
+        p.requires_grad_(False)
+    return AdaptedModel(model, adapter)
 
 
 def set_train_mode(model: nn.Module, pretrained: bool) -> None:
@@ -168,7 +245,8 @@ def set_train_mode(model: nn.Module, pretrained: bool) -> None:
 
 
 def decoder_parameters(model: nn.Module):
-    return [p for n, p in model.named_parameters() if not n.startswith("encoder.")]
+    enc = {id(p) for p in model.encoder.parameters()}
+    return [p for p in model.parameters() if id(p) not in enc]
 
 
 def count_parameters(model: nn.Module) -> dict[str, int]:

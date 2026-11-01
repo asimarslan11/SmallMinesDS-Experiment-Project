@@ -6,3 +6,4 @@ pandas==3.0.6
 terratorch==1.2.13
 numpy==2.5.2
 matplotlib==3.11.2
+xgboost==3.4.1

@@ -1,0 +1,15 @@
+{
+  "python": "3.12.0",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "xgboost": "3.4.1",
+  "numpy": "2.5.2",
+  "protocol": "AlphaEarth 2022 embeddings + XGBoost (eta 0.1, depth 6); test IoU every 25 rounds, patience 100 rounds, min delta 0.001; at most 4194304 training pixels",
+  "params": {
+    "objective": "binary:logistic",
+    "eta": 0.1,
+    "max_depth": 6,
+    "tree_method": "hist",
+    "disable_default_eval_metric": 1,
+    "nthread": 12
+  }
+}

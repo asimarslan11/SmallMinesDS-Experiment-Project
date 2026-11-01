@@ -2,8 +2,10 @@
 
 Protocol
     Conditions: TerraMind v1 tiny encoder either pretrained + frozen or randomly initialised +
-    trainable (Experiment 2), and a plain UNet of the same parameter count trained from scratch
-    (Experiment 3); all with D4 augmentation.
+    trainable (Experiment 2); a plain UNet of the same parameter count trained from scratch
+    (Experiment 3) and one of half that count (Experiment 3 v2); frozen pretrained DOFA base and
+    SSL4EO-S12 ResNet50 encoders with the same decoder as TerraMind (Experiment 4); all with D4
+    augmentation.
     Budget: no fixed epoch or step count. Test IoU is checked every CHECK_EVERY (5) epochs,
     for every N. A check improves when IoU exceeds the best so far by more
     than MIN_DELTA (1e-3). Training stops at the first check that comes PATIENCE_EPOCHS (20)
@@ -31,7 +33,9 @@ from torch.utils.flop_counter import FlopCounterMode
 
 from .data import Split, as_model_input, augment_batch, training_order
 from .metrics import confusion_counts, summarise
-from .model import build_model, build_unet, count_parameters, set_train_mode
+from .model import (
+    UNET_HALF_BASE, build_foundation_model, build_model, build_unet, count_parameters, set_train_mode,
+)
 
 LR_START = 5e-3
 LR_MIN = 1e-5
@@ -54,7 +58,11 @@ CONDITIONS = [  # (encoder, augmentation)
     ("pretrained", True),
     ("random", True),
     ("unet", True),
+    ("unet_half", True),
+    ("dofa", True),
+    ("resnet50", True),
 ]
+FROZEN = {"pretrained", "dofa", "resnet50"}  # conditions whose encoder is pretrained and frozen
 
 PROTOCOL = (f"early stopping on test IoU checked every {CHECK_EVERY} epochs: patience {PATIENCE_EPOCHS} epochs, min delta {MIN_DELTA:g}; "
             f"AdamW lr {LR_START:g} halved on plateau, min {LR_MIN:g}")
@@ -74,7 +82,7 @@ def report_grid() -> list[tuple[int, int]]:
 class RunConfig:
     seed: int
     n_train: int
-    encoder: str  # "pretrained" (frozen) | "random" (trainable) | "unet" (plain UNet, trainable)
+    encoder: str  # one of the CONDITIONS names, e.g. "pretrained" (TerraMind, frozen), "unet"
     augment: bool = True
     norm: str = "batchnorm"  # decoder-side normalisation layer
 
@@ -146,7 +154,7 @@ def flops_per_sample(model, x: torch.Tensor, y: torch.Tensor, pretrained: bool) 
 def run_one(cfg: RunConfig, train: Split, test: Split, device: torch.device) -> dict:
     """Train one configuration from scratch and return a flat result record."""
     t0 = time.perf_counter()
-    pretrained = cfg.encoder == "pretrained"
+    pretrained = cfg.encoder in FROZEN
     rows = subset_rows(train, cfg)
     sub = train.subset(rows).to(device)
     n = len(sub)
@@ -156,6 +164,10 @@ def run_one(cfg: RunConfig, train: Split, test: Split, device: torch.device) -> 
 
     if cfg.encoder == "unet":
         model = build_unet(seed=cfg.seed).to(device)
+    elif cfg.encoder == "unet_half":
+        model = build_unet(seed=cfg.seed, base=UNET_HALF_BASE).to(device)
+    elif cfg.encoder in ("dofa", "resnet50"):
+        model = build_foundation_model(cfg.encoder, seed=cfg.seed).to(device)
     else:
         model = build_model(pretrained=pretrained, seed=cfg.seed, norm=cfg.norm).to(device)
     params = [p for p in model.parameters() if p.requires_grad]
