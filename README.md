@@ -30,7 +30,7 @@ some PyTorch/TerraTorch package files exceed the default 260-character path limi
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install -r requirements-lock.txt   # exact environment of the reported runs (or requirements.txt: direct dependencies only)
 python scripts\check_gpu.py        # must print "OK: GPU works with PyTorch."
 python scripts\download_data.py    # SmallMinesDS from Hugging Face, pinned revision, checksum verified
 python scripts\build_cache.py      # normalised per-split arrays in data/cache/
